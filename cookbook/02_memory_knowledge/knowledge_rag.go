@@ -1,13 +1,16 @@
 //go:build ignore
 
-// Knowledge RAG — inject domain knowledge when the user asks questions.
+// Knowledge RAG — salon receptionist with a knowledge base. Try:
+//   "What are your opening hours?"
+//   "How much does a haircut cost?"
+//   "Where are you located?"
+//   "Do you have parking?"
 //
-//	OPENAI_API_KEY=sk-... go run ./cookbook/02_memory_knowledge/knowledge_rag.go
+//	source .env && go run ./cookbook/02_memory_knowledge/knowledge_rag.go
 package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"strings"
 
@@ -15,7 +18,6 @@ import (
 	"github.com/saeedalam/agnogo/providers/openai"
 )
 
-// Simulated knowledge base (in production: pgvector, Qdrant, etc.)
 var knowledgeBase = map[string]string{
 	"hours":    "Opening hours: Monday-Friday 09:00-18:00, Saturday 10:00-15:00, Sunday closed.",
 	"pricing":  "Haircut: 350 SEK, Color: 800 SEK, Beard trim: 200 SEK, Full package: 1200 SEK.",
@@ -27,21 +29,8 @@ var knowledgeBase = map[string]string{
 func searchKnowledge(query string) string {
 	query = strings.ToLower(query)
 	var results []string
-	for key, content := range knowledgeBase {
-		if strings.Contains(query, key) ||
-			strings.Contains(query, "hour") || strings.Contains(query, "time") && key == "hours" ||
-			strings.Contains(query, "price") || strings.Contains(query, "cost") && key == "pricing" ||
-			strings.Contains(query, "where") && key == "location" ||
-			strings.Contains(query, "park") && key == "parking" ||
-			strings.Contains(query, "book") && key == "booking" {
-			results = append(results, content)
-		}
-	}
-	if len(results) == 0 {
-		// Return all knowledge as fallback
-		for _, v := range knowledgeBase {
-			results = append(results, v)
-		}
+	for _, content := range knowledgeBase {
+		results = append(results, content)
 	}
 	return strings.Join(results, "\n")
 }
@@ -59,21 +48,5 @@ func main() {
 		Debug: &debug,
 	})
 
-	session := agnogo.NewSession("customer-1")
-
-	questions := []string{
-		"What are your opening hours?",
-		"How much does a haircut cost?",
-		"Where are you located and is there parking?",
-	}
-
-	for _, q := range questions {
-		fmt.Printf("\n--- Q: %s ---\n", q)
-		resp, err := agent.Run(context.Background(), session, q)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			continue
-		}
-		fmt.Println(resp.Text)
-	}
+	agent.CLI()
 }
