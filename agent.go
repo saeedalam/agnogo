@@ -417,3 +417,85 @@ type StreamChunk struct {
 	Done  bool
 	Error error
 }
+
+// ── Agno-equivalent Agent methods ────────────────────────
+
+// SetTools replaces all tools. Agno: agent.set_tools()
+func (a *Agent) SetTools(defs ...ToolDef) *Agent {
+	a.tools = NewToolRegistry()
+	return a.AddTools(defs...)
+}
+
+// ClearTools removes all tools.
+func (a *Agent) ClearTools() *Agent {
+	a.tools = NewToolRegistry()
+	return a
+}
+
+// GetSession loads a session from storage. Agno: agent.get_session()
+func (a *Agent) GetSession(ctx context.Context, sessionID string) (*Session, error) {
+	if a.storage == nil {
+		return nil, fmt.Errorf("storage not configured")
+	}
+	return a.storage.Load(ctx, sessionID)
+}
+
+// SaveSession persists a session. Agno: agent.save_session()
+func (a *Agent) SaveSession(ctx context.Context, session *Session) error {
+	if a.storage == nil {
+		return fmt.Errorf("storage not configured")
+	}
+	return a.storage.Save(ctx, session)
+}
+
+// DeleteSession removes a session. Agno: agent.delete_session()
+func (a *Agent) DeleteSession(ctx context.Context, sessionID string) error {
+	if a.storage == nil {
+		return fmt.Errorf("storage not configured")
+	}
+	return a.storage.Delete(ctx, sessionID)
+}
+
+// ListSessions returns recent sessions. Agno: agent.get_sessions()
+func (a *Agent) ListSessions(ctx context.Context, limit int) ([]*Session, error) {
+	if a.storage == nil {
+		return nil, fmt.Errorf("storage not configured")
+	}
+	return a.storage.List(ctx, limit)
+}
+
+// AddKnowledge adds content to the knowledge store. Agno: agent.add_to_knowledge()
+func (a *Agent) AddKnowledge(ctx context.Context, key, content string) error {
+	if ks, ok := a.storage.(KnowledgeStore); ok {
+		return ks.AddKnowledge(ctx, key, content)
+	}
+	return fmt.Errorf("storage does not support knowledge management")
+}
+
+// GetChatHistory returns conversation messages. Agno: agent.get_chat_history()
+func (a *Agent) GetChatHistory(ctx context.Context, sessionID string) ([]Message, error) {
+	session, err := a.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return session.History, nil
+}
+
+// GetMemories returns learned facts. Agno: agent.get_user_memories()
+func (a *Agent) GetMemories(ctx context.Context, sessionID string) (map[string]string, error) {
+	session, err := a.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return session.Memory, nil
+}
+
+// PrintResponse runs the agent and prints the response. Agno: agent.print_response()
+func (a *Agent) PrintResponse(ctx context.Context, session *Session, message string) {
+	resp, err := a.Run(ctx, session, message)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	fmt.Println(resp.Text)
+}

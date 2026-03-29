@@ -66,6 +66,17 @@ func (s *Storage) Save(ctx context.Context, sess *agnogo.Session) error {
 	return s.set(ctx, s.key(sess.ID), string(data), s.ttl)
 }
 
+func (s *Storage) Delete(ctx context.Context, sessionID string) error {
+	_, err := s.command(ctx, fmt.Sprintf("*2\r\n$3\r\nDEL\r\n$%d\r\n%s\r\n", len(s.key(sessionID)), s.key(sessionID)))
+	return err
+}
+
+func (s *Storage) List(_ context.Context, _ int) ([]*agnogo.Session, error) {
+	// Redis doesn't support listing by pattern efficiently without SCAN.
+	// Return empty — users should use a SQL-based storage for listing.
+	return nil, fmt.Errorf("redis storage does not support List (use SQL-based storage)")
+}
+
 // Simple Redis protocol (RESP) client — no external dependency
 func (s *Storage) get(ctx context.Context, key string) (string, error) {
 	return s.command(ctx, fmt.Sprintf("*2\r\n$3\r\nGET\r\n$%d\r\n%s\r\n", len(key), key))

@@ -92,3 +92,33 @@ func (s *Storage) Save(ctx context.Context, sess *agnogo.Session) error {
 	)
 	return err
 }
+
+func (s *Storage) Delete(ctx context.Context, sessionID string) error {
+	q := fmt.Sprintf("DELETE FROM %s WHERE id = ?", s.table)
+	_, err := s.db.ExecContext(ctx, q, sessionID)
+	return err
+}
+
+func (s *Storage) List(ctx context.Context, limit int) ([]*agnogo.Session, error) {
+	if limit <= 0 { limit = 50 }
+	q := fmt.Sprintf("SELECT id, user_id, channel, history, memory, state, metadata, created_at, updated_at FROM %s ORDER BY updated_at DESC LIMIT ?", s.table)
+	rows, err := s.db.QueryContext(ctx, q, limit)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	var sessions []*agnogo.Session
+	for rows.Next() {
+		var id, userID, channel, historyJSON, memoryJSON, stateJSON, metadataJSON, createdAt, updatedAt string
+		if err := rows.Scan(&id, &userID, &channel, &historyJSON, &memoryJSON, &stateJSON, &metadataJSON, &createdAt, &updatedAt); err != nil { continue }
+		sess := agnogo.NewSession(id)
+		sess.UserID = userID
+		sess.Channel = channel
+		json.Unmarshal([]byte(historyJSON), &sess.History)
+		json.Unmarshal([]byte(memoryJSON), &sess.Memory)
+		json.Unmarshal([]byte(stateJSON), &sess.State)
+		json.Unmarshal([]byte(metadataJSON), &sess.Metadata)
+		sess.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		sess.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+		sessions = append(sessions, sess)
+	}
+	return sessions, nil
+}
