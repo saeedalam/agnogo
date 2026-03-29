@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/saeedalam/agnogo"
 )
@@ -15,9 +16,21 @@ func File(baseDir string) []agnogo.ToolDef {
 	if baseDir == "" {
 		baseDir = "."
 	}
-	resolve := func(name string) string {
-		return filepath.Join(baseDir, filepath.Clean(name))
+	absBase, _ := filepath.Abs(baseDir)
+
+	resolve := func(name string) (string, error) {
+		resolved := filepath.Join(absBase, filepath.Clean("/"+name))
+		abs, err := filepath.Abs(resolved)
+		if err != nil {
+			return "", fmt.Errorf("invalid path: %s", name)
+		}
+		// Prevent path traversal: resolved path must be within baseDir
+		if !strings.HasPrefix(abs, absBase+string(filepath.Separator)) && abs != absBase {
+			return "", fmt.Errorf("path '%s' escapes base directory", name)
+		}
+		return abs, nil
 	}
+
 	return []agnogo.ToolDef{
 		{
 			Name: "read_file", Desc: "Read the contents of a file",
@@ -25,7 +38,11 @@ func File(baseDir string) []agnogo.ToolDef {
 				"path": {Type: "string", Desc: "File path (relative to base dir)", Required: true},
 			},
 			Fn: func(ctx context.Context, args map[string]string) (string, error) {
-				data, err := os.ReadFile(resolve(args["path"]))
+				path, err := resolve(args["path"])
+				if err != nil {
+					return err.Error(), nil
+				}
+				data, err := os.ReadFile(path)
 				if err != nil {
 					return fmt.Sprintf("Error: %s", err), nil
 				}
@@ -42,7 +59,10 @@ func File(baseDir string) []agnogo.ToolDef {
 				"content": {Type: "string", Desc: "Content to write", Required: true},
 			},
 			Fn: func(ctx context.Context, args map[string]string) (string, error) {
-				path := resolve(args["path"])
+				path, err := resolve(args["path"])
+				if err != nil {
+					return err.Error(), nil
+				}
 				os.MkdirAll(filepath.Dir(path), 0o755)
 				if err := os.WriteFile(path, []byte(args["content"]), 0o644); err != nil {
 					return fmt.Sprintf("Error: %s", err), nil
@@ -56,9 +76,13 @@ func File(baseDir string) []agnogo.ToolDef {
 				"path": {Type: "string", Desc: "Directory path"},
 			},
 			Fn: func(ctx context.Context, args map[string]string) (string, error) {
-				dir := resolve(args["path"])
-				if dir == "" {
-					dir = baseDir
+				p := args["path"]
+				if p == "" {
+					p = "."
+				}
+				dir, err := resolve(p)
+				if err != nil {
+					return err.Error(), nil
 				}
 				entries, err := os.ReadDir(dir)
 				if err != nil {
@@ -66,9 +90,9 @@ func File(baseDir string) []agnogo.ToolDef {
 				}
 				var result string
 				for _, e := range entries {
-					prefix := "📄"
+					prefix := "F"
 					if e.IsDir() {
-						prefix = "📁"
+						prefix = "D"
 					}
 					result += fmt.Sprintf("%s %s\n", prefix, e.Name())
 				}

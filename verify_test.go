@@ -291,7 +291,7 @@ func TestVerifyCancelRun(t *testing.T) {
 }
 
 func TestVerifySerialization(t *testing.T) {
-	a := New(Config{Instructions: "You are helpful.", MaxLoops: 5})
+	a := New(Config{Model: &mockModel{}, Instructions: "You are helpful.", MaxLoops: 5})
 	a.Tool("t1", "Tool 1", nil, nil)
 	a.Tool("t2", "Tool 2", nil, nil)
 

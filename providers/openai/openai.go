@@ -83,7 +83,10 @@ func (p *Provider) ChatCompletion(ctx context.Context, messages []agnogo.Message
 		return nil, fmt.Errorf("marshal: %w", err)
 	}
 
-	req, _ := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/chat/completions", bytes.NewReader(bodyJSON))
+	req, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/chat/completions", bytes.NewReader(bodyJSON))
+	if err != nil {
+		return nil, fmt.Errorf("new request: %w", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.apiKey)
 

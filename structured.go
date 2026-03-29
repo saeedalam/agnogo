@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // RunStructured runs the agent and parses the response into a Go struct.
@@ -18,45 +19,21 @@ import (
 //	err := agnogo.RunStructured(ctx, agent, session, "Book a haircut tomorrow at 14:00", &result)
 //	// result.Service == "Herrklippning", result.Date == "2026-04-01", etc.
 func RunStructured[T any](ctx context.Context, agent *Agent, session *Session, message string, out *T) error {
-	// Add JSON instruction to the system prompt
+	// Build JSON instruction as a separate user message prefix (no agent mutation)
 	schema, _ := json.Marshal(out)
-	instruction := fmt.Sprintf("\n\nRESPONSE FORMAT: You MUST respond with valid JSON matching this structure: %s\nReturn ONLY the JSON, no other text.", string(schema))
+	instruction := fmt.Sprintf("RESPONSE FORMAT: You MUST respond with valid JSON matching this structure: %s\nReturn ONLY the JSON, no other text.", string(schema))
 
-	// Temporarily modify instructions
-	origInstr := agent.instructions
-	origPromptFunc := agent.promptFunc
-	if agent.promptFunc != nil {
-		orig := agent.promptFunc
-		agent.promptFunc = func(s *Session) string {
-			return orig(s) + instruction
-		}
-	} else {
-		agent.instructions += instruction
-	}
+	// Inject as a system-level message in the session history temporarily
+	// We prepend the instruction to the user message to avoid mutating the agent
+	augmented := instruction + "\n\n" + message
 
-	resp, err := agent.Run(ctx, session, message)
-
-	// Restore
-	agent.instructions = origInstr
-	agent.promptFunc = origPromptFunc
-
+	resp, err := agent.Run(ctx, session, augmented)
 	if err != nil {
 		return err
 	}
 
 	// Parse JSON from response
-	text := resp.Text
-	// Strip markdown code blocks if present
-	if len(text) > 6 && text[:3] == "```" {
-		if idx := findIndex(text[3:], "```"); idx > 0 {
-			inner := text[3 : 3+idx]
-			if len(inner) > 0 && inner[0] == '{' {
-				text = inner
-			} else if nl := findIndex(inner, "\n"); nl > 0 {
-				text = inner[nl+1:]
-			}
-		}
-	}
+	text := extractJSON(resp.Text)
 
 	if err := json.Unmarshal([]byte(text), out); err != nil {
 		return fmt.Errorf("failed to parse structured response: %w (raw: %s)", err, truncateStr(text, 200))
@@ -64,11 +41,25 @@ func RunStructured[T any](ctx context.Context, agent *Agent, session *Session, m
 	return nil
 }
 
-func findIndex(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
+// extractJSON strips markdown code blocks and finds JSON content.
+func extractJSON(text string) string {
+	text = strings.TrimSpace(text)
+
+	// Strip markdown code blocks
+	if strings.HasPrefix(text, "```") {
+		lines := strings.SplitN(text, "\n", 2)
+		if len(lines) > 1 {
+			rest := lines[1]
+			if idx := strings.LastIndex(rest, "```"); idx > 0 {
+				text = strings.TrimSpace(rest[:idx])
+			}
 		}
 	}
-	return -1
+
+	// Try to find JSON object or array
+	if start := strings.IndexAny(text, "{["); start >= 0 {
+		text = text[start:]
+	}
+
+	return text
 }

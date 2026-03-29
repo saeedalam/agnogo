@@ -178,8 +178,14 @@ func TestShell(t *testing.T) {
 
 	// Blocked command
 	result, _ = tools[0].Fn(context.Background(), map[string]string{"command": "rm -rf /"})
-	if !contains(result, "not allowed") {
+	if !contains(result, "not in allowlist") {
 		t.Errorf("expected blocked, got %q", result)
+	}
+
+	// Shell metacharacter injection blocked
+	result, _ = tools[0].Fn(context.Background(), map[string]string{"command": "echo hello; rm -rf /"})
+	if !contains(result, "metacharacter") {
+		t.Errorf("expected metacharacter blocked, got %q", result)
 	}
 }
 

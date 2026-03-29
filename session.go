@@ -143,3 +143,12 @@ func (s *Session) GetMeta(key string) string {
 	defer s.mu.Unlock()
 	return s.Metadata[key]
 }
+
+// GetHistory returns a copy of the conversation history. Thread-safe.
+func (s *Session) GetHistory() []Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := make([]Message, len(s.History))
+	copy(cp, s.History)
+	return cp
+}

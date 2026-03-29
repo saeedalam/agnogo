@@ -70,8 +70,14 @@ func OpenAIStreamResponse(ctx context.Context, apiKey, model, baseURL string, me
 		body["tools"] = tools
 	}
 
-	bodyJSON, _ := json.Marshal(body)
-	req, _ := http.NewRequestWithContext(ctx, "POST", baseURL+"/chat/completions", bytes.NewReader(bodyJSON))
+	bodyJSON, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/chat/completions", bytes.NewReader(bodyJSON))
+	if err != nil {
+		return nil, fmt.Errorf("new request: %w", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Accept", "text/event-stream")
@@ -223,11 +229,18 @@ func (a *Agent) RunStreamReal(ctx context.Context, session *Session, userMessage
 			// Execute tools (not streamed — tool results come as a batch)
 			for _, tcd := range toolCallDeltas {
 				args := ParseArgs(tcd.Arguments)
-				result, _ := a.tools.Invoke(ctx, tcd.Name, args)
+				result, err := a.tools.Invoke(ctx, tcd.Name, args)
+				if err != nil {
+					result = fmt.Sprintf("Tool '%s' failed: %s", tcd.Name, err.Error())
+				}
 				session.AddToolResult(tcd.ID, result)
 			}
 			// After tool execution, run again (non-streaming) for the final response
-			resp, _ := a.Run(ctx, session, "[Tool results processed. Continue responding.]")
+			resp, err := a.Run(ctx, session, "[Tool results processed. Continue responding.]")
+			if err != nil {
+				ch <- StreamChunk{Error: err, Done: true}
+				return
+			}
 			if resp != nil {
 				for _, word := range strings.Fields(resp.Text) {
 					ch <- StreamChunk{Text: word + " "}

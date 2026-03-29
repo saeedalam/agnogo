@@ -40,7 +40,7 @@ func CancelRun(runID string) {
 }
 
 // UnregisterRun removes a completed run from the registry.
-// Called automatically at the end of Run if registered.
+// Must be called by the caller when the run completes to prevent memory leaks.
 func UnregisterRun(runID string) {
 	activeRunsMu.Lock()
 	delete(activeRuns, runID)

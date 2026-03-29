@@ -83,16 +83,19 @@ func (p *Provider) ChatCompletion(ctx context.Context, messages []agnogo.Message
 	}
 	if len(tools) > 0 {
 		// Convert OpenAI tool format to Anthropic format
-		anthropicTools := make([]map[string]any, len(tools))
-		for i, t := range tools {
-			fn := t["function"].(map[string]any)
+		anthropicTools := make([]map[string]any, 0, len(tools))
+		for _, t := range tools {
+			fn, ok := t["function"].(map[string]any)
+			if !ok {
+				continue
+			}
 			at := map[string]any{"name": fn["name"], "description": fn["description"]}
 			if params, ok := fn["parameters"]; ok {
 				at["input_schema"] = params
 			} else {
 				at["input_schema"] = map[string]any{"type": "object", "properties": map[string]any{}}
 			}
-			anthropicTools[i] = at
+			anthropicTools = append(anthropicTools, at)
 		}
 		body["tools"] = anthropicTools
 	}
@@ -109,7 +112,10 @@ func (p *Provider) ChatCompletion(ctx context.Context, messages []agnogo.Message
 	}
 	defer resp.Body.Close()
 
-	data, _ := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic read body: %w", err)
+	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("anthropic %d: %s", resp.StatusCode, string(data)[:min(len(data), 300)])
 	}

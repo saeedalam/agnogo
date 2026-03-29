@@ -63,8 +63,11 @@ type Config struct {
 	FallbackText string                        // text when max loops reached
 }
 
-// New creates an Agent.
+// New creates an Agent. Panics if Config.Model is nil.
 func New(cfg Config) *Agent {
+	if cfg.Model == nil {
+		panic("agnogo: Config.Model is required")
+	}
 	maxLoops := cfg.MaxLoops
 	if maxLoops == 0 {
 		maxLoops = defaultMaxLoops
@@ -170,6 +173,9 @@ type Response struct {
 //
 //	resp, _ := a.Run(ctx, session, "Hello!")
 func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (*Response, error) {
+	if session == nil {
+		return nil, fmt.Errorf("agnogo: session is nil")
+	}
 	runStart := time.Now()
 	runID := generateRunID()
 	metrics := &RunMetrics{RunID: runID}
@@ -205,7 +211,7 @@ func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (
 	}
 
 	messages := []Message{{Role: "system", Content: systemPrompt}}
-	messages = append(messages, session.History...)
+	messages = append(messages, session.GetHistory()...)
 	session.AddMessage("user", userMessage)
 	messages = append(messages, Message{Role: "user", Content: userMessage})
 
@@ -242,6 +248,14 @@ func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (
 
 	// Agent loop
 	for loop := 0; loop < a.maxLoops; loop++ {
+		// Check for context cancellation between iterations
+		select {
+		case <-ctx.Done():
+			metrics.Duration = time.Since(runStart)
+			return nil, ctx.Err()
+		default:
+		}
+
 		// Model call with optional retry
 		modelStart := time.Now()
 		var resp *ModelResponse
@@ -268,7 +282,7 @@ func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (
 			slog.Error("agnogo: model error", "error", err, "loop", loop)
 			metrics.Duration = time.Since(runStart)
 			dbg.printRunEnd(runID, metrics)
-			return &Response{Text: a.fallbackText, Metrics: metrics}, nil
+			return nil, fmt.Errorf("model call failed (loop %d): %w", loop, err)
 		}
 
 		// Text response — done
@@ -467,9 +481,17 @@ func (a *Agent) RunStream(ctx context.Context, session *Session, userMessage str
 		}
 		for i, word := range strings.Fields(resp.Text) {
 			if i > 0 {
-				ch <- StreamChunk{Text: " "}
+				select {
+				case ch <- StreamChunk{Text: " "}:
+				case <-ctx.Done():
+					return
+				}
 			}
-			ch <- StreamChunk{Text: word}
+			select {
+			case ch <- StreamChunk{Text: word}:
+			case <-ctx.Done():
+				return
+			}
 		}
 		ch <- StreamChunk{Done: true}
 	}()

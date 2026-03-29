@@ -100,7 +100,10 @@ func (p *Provider) ChatCompletion(ctx context.Context, messages []agnogo.Message
 		// Convert OpenAI tools to Gemini function declarations
 		var funcDecls []map[string]any
 		for _, t := range tools {
-			fn := t["function"].(map[string]any)
+			fn, ok := t["function"].(map[string]any)
+			if !ok {
+				continue
+			}
 			decl := map[string]any{"name": fn["name"], "description": fn["description"]}
 			if params, ok := fn["parameters"]; ok {
 				decl["parameters"] = params
@@ -121,7 +124,10 @@ func (p *Provider) ChatCompletion(ctx context.Context, messages []agnogo.Message
 	}
 	defer resp.Body.Close()
 
-	data, _ := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("gemini read body: %w", err)
+	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("gemini %d: %s", resp.StatusCode, string(data)[:min(len(data), 300)])
 	}

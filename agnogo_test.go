@@ -171,7 +171,7 @@ func TestTeamRouting(t *testing.T) {
 	}
 
 	// Verify agent registration
-	dummyAgent := New(Config{})
+	dummyAgent := New(Config{Model: &mockModel{}})
 	team.Agent("booking", dummyAgent)
 	team.Agent("support", dummyAgent)
 

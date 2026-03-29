@@ -105,10 +105,16 @@ func (w *ParallelWorkflow) Run(ctx context.Context, session *Session, input stri
 	ch := make(chan stepResult, len(w.steps))
 	for _, step := range w.steps {
 		go func(s WorkflowStep) {
-			// Each parallel agent gets its own session copy to avoid races
+			// Each parallel agent gets its own session with deep-copied maps
 			parallelSession := NewSession(session.ID + "_" + s.Name)
-			parallelSession.Memory = session.Memory
-			parallelSession.Metadata = session.Metadata
+			session.mu.Lock()
+			for k, v := range session.Memory {
+				parallelSession.Memory[k] = v
+			}
+			for k, v := range session.Metadata {
+				parallelSession.Metadata[k] = v
+			}
+			session.mu.Unlock()
 			resp, err := s.Agent.Run(ctx, parallelSession, input)
 			ch <- stepResult{name: s.Name, resp: resp, err: err}
 		}(step)
