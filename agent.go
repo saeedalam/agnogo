@@ -28,14 +28,17 @@ type Agent struct {
 	instructions string
 	promptFunc   func(session *Session) string
 	knowledge    Knowledge
-	knowledgeN   int // max results for knowledge search (default 3)
+	knowledgeN   int
 	memory       MemoryExtractor
 	storage      Storage
 	trace        *Trace
+	retry        *RetryConfig
+	history      *HistoryConfig
+	debug        DebugConfig
 	inputGuards  []Guardrail
 	outputGuards []Guardrail
 	maxLoops     int
-	fallbackText string // returned on max loops (default: English)
+	fallbackText string
 }
 
 // Config configures a new Agent.
@@ -49,6 +52,9 @@ type Config struct {
 	Memory       MemoryExtractor               // custom memory extractor (overrides AutoMemory)
 	Storage      Storage                       // auto-save sessions (optional)
 	Trace        *Trace                        // observability hooks (optional)
+	Retry        *RetryConfig                  // retry failed model calls (optional)
+	History      *HistoryConfig                // trim long histories (optional)
+	Debug        *DebugConfig                  // debug output (optional)
 	MaxLoops     int                           // max tool loops per Run (default 8)
 	FallbackText string                        // text when max loops reached
 }
@@ -75,6 +81,11 @@ func New(cfg Config) *Agent {
 		mem = DefaultPatternMemory()
 	}
 
+	var dbg DebugConfig
+	if cfg.Debug != nil {
+		dbg = *cfg.Debug
+	}
+
 	return &Agent{
 		model:        cfg.Model,
 		tools:        NewToolRegistry(),
@@ -85,6 +96,9 @@ func New(cfg Config) *Agent {
 		memory:       mem,
 		storage:      cfg.Storage,
 		trace:        cfg.Trace,
+		retry:        cfg.Retry,
+		history:      cfg.History,
+		debug:        dbg,
 		inputGuards:  nil,
 		outputGuards: nil,
 		maxLoops:     maxLoops,
@@ -99,6 +113,17 @@ func New(cfg Config) *Agent {
 //	}, bookFn)
 func (a *Agent) Tool(name, desc string, params Params, fn ToolFunc) *Agent {
 	a.tools.Add(name, desc, params, fn)
+	return a
+}
+
+// AddTools registers multiple tools from built-in tool packages.
+//
+//	a.AddTools(tools.Calculator()...)
+//	a.AddTools(tools.WebSearch()...)
+func (a *Agent) AddTools(defs ...ToolDef) *Agent {
+	for _, d := range defs {
+		a.tools.Add(d.Name, d.Desc, d.Params, d.Fn)
+	}
 	return a
 }
 
@@ -167,16 +192,36 @@ func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (
 		}
 	}
 
+	// History trimming
+	if a.history != nil {
+		before := len(messages)
+		messages = trimHistory(messages, *a.history)
+		messages = trimToolMessages(messages, a.history.MaxToolMessages)
+		a.debug.printHistory(before, len(messages))
+	}
+
+	a.debug.printMessages(messages)
+
 	toolDefs := a.tools.FunctionDefs()
 	var toolsCalled []string
 	dupes := map[string]int{}
 
 	// Agent loop
 	for loop := 0; loop < a.maxLoops; loop++ {
+		// Model call with optional retry
 		modelStart := time.Now()
-		resp, err := a.model.ChatCompletion(ctx, messages, toolDefs)
+		var resp *ModelResponse
+		var err error
+		if a.retry != nil {
+			resp, err = retryModelCall(ctx, *a.retry, func() (*ModelResponse, error) {
+				return a.model.ChatCompletion(ctx, messages, toolDefs)
+			})
+		} else {
+			resp, err = a.model.ChatCompletion(ctx, messages, toolDefs)
+		}
 		modelDur := time.Since(modelStart)
 
+		a.debug.printModelCall(len(messages), len(resp.ToolCalls), modelDur)
 		if a.trace != nil && a.trace.OnModelCall != nil {
 			a.trace.OnModelCall(messages, resp, modelDur)
 		}
@@ -197,6 +242,7 @@ func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (
 				}
 				text = err.Error()
 			}
+			a.debug.printResponse(text)
 			session.AddMessage("assistant", text)
 
 			// Memory extraction
@@ -271,6 +317,7 @@ func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (
 				result = fmt.Sprintf("Tool '%s' failed: %s. Try a different approach.", tc.Name, err.Error())
 			}
 
+			a.debug.printToolCall(tc.Name, args, result, toolDur, err)
 			if a.trace != nil && a.trace.OnToolCall != nil {
 				a.trace.OnToolCall(tc.Name, args, result, toolDur, err)
 			}

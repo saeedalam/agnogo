@@ -25,6 +25,15 @@ import (
 // ToolFunc is any Go function that the agent can call.
 type ToolFunc func(ctx context.Context, args map[string]string) (string, error)
 
+// ToolDef is a tool definition for bulk registration via AddTools().
+// Used by built-in tool packages: tools.Calculator(), tools.WebSearch(), etc.
+type ToolDef struct {
+	Name   string
+	Desc   string
+	Params Params
+	Fn     ToolFunc
+}
+
 // Param describes one parameter for a tool.
 type Param struct {
 	Type     string   `json:"type"`               // "string", "number", "boolean"
