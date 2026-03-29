@@ -138,6 +138,11 @@ func (p *Provider) ChatCompletion(ctx context.Context, messages []agnogo.Message
 				} `json:"parts"`
 			} `json:"content"`
 		} `json:"candidates"`
+		UsageMetadata *struct {
+			PromptTokenCount     int `json:"promptTokenCount"`
+			CandidatesTokenCount int `json:"candidatesTokenCount"`
+			TotalTokenCount      int `json:"totalTokenCount"`
+		} `json:"usageMetadata"`
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
@@ -157,6 +162,13 @@ func (p *Provider) ChatCompletion(ctx context.Context, messages []agnogo.Message
 				Name: part.FunctionCall.Name,
 				Arguments: string(part.FunctionCall.Args),
 			})
+		}
+	}
+	if result.UsageMetadata != nil {
+		mr.Usage = &agnogo.Usage{
+			InputTokens:  result.UsageMetadata.PromptTokenCount,
+			OutputTokens: result.UsageMetadata.CandidatesTokenCount,
+			TotalTokens:  result.UsageMetadata.TotalTokenCount,
 		}
 	}
 	return mr, nil

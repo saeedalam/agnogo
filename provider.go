@@ -17,6 +17,34 @@ type ModelProvider interface {
 type ModelResponse struct {
 	Text      string
 	ToolCalls []ToolCall
+	Usage     *Usage // token usage from the model (optional)
+}
+
+// Usage tracks token counts from a model call.
+type Usage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	TotalTokens  int `json:"total_tokens"`
+}
+
+// RunMetrics tracks cumulative metrics for a single Run call.
+type RunMetrics struct {
+	RunID        string        `json:"run_id"`
+	Duration     time.Duration `json:"duration"`
+	ModelCalls   int           `json:"model_calls"`
+	ToolCalls    int           `json:"tool_calls"`
+	InputTokens  int           `json:"input_tokens"`
+	OutputTokens int           `json:"output_tokens"`
+	TotalTokens  int           `json:"total_tokens"`
+}
+
+func (m *RunMetrics) addUsage(u *Usage) {
+	if u == nil {
+		return
+	}
+	m.InputTokens += u.InputTokens
+	m.OutputTokens += u.OutputTokens
+	m.TotalTokens += u.TotalTokens
 }
 
 // ModelConfig holds configurable model parameters.

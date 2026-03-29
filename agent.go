@@ -2,8 +2,10 @@ package agnogo
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 )
@@ -161,18 +163,39 @@ type Response struct {
 	ToolsCalled   []string        `json:"tools_called,omitempty"`
 	NeedsApproval bool            `json:"needs_approval,omitempty"`
 	Approval      *HumanApproval  `json:"approval,omitempty"`
+	Metrics       *RunMetrics     `json:"metrics,omitempty"`
 }
 
 // Run processes one user message. The main method.
 //
 //	resp, _ := a.Run(ctx, session, "Hello!")
 func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (*Response, error) {
+	runStart := time.Now()
+	runID := generateRunID()
+	metrics := &RunMetrics{RunID: runID}
+
+	// Check env var for debug override
+	dbg := a.debug
+	if !dbg.Enabled {
+		if v := os.Getenv("AGNOGO_DEBUG"); v == "true" || v == "1" {
+			dbg = DefaultDebug()
+			if os.Getenv("AGNOGO_DEBUG_LEVEL") == "2" {
+				dbg.Level = 2
+			}
+		}
+	}
+
+	dbg.printRunStart(runID, session.ID)
+
 	// Input guardrails
 	if err := runGuardrails(ctx, a.inputGuards, session, userMessage); err != nil {
 		if a.trace != nil && a.trace.OnGuardrail != nil {
 			a.trace.OnGuardrail("input", "input", true)
 		}
-		return &Response{Text: err.Error()}, nil
+		dbg.printGuardrail("input", "input", true)
+		metrics.Duration = time.Since(runStart)
+		dbg.printRunEnd(runID, metrics)
+		return &Response{Text: err.Error(), Metrics: metrics}, nil
 	}
 
 	// Build messages
@@ -208,10 +231,10 @@ func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (
 		before := len(messages)
 		messages = trimHistory(messages, *a.history)
 		messages = trimToolMessages(messages, a.history.MaxToolMessages)
-		a.debug.printHistory(before, len(messages))
+		dbg.printHistory(before, len(messages))
 	}
 
-	a.debug.printMessages(messages)
+	dbg.printMessages(messages)
 
 	toolDefs := a.tools.FunctionDefs()
 	var toolsCalled []string
@@ -232,13 +255,20 @@ func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (
 		}
 		modelDur := time.Since(modelStart)
 
-		a.debug.printModelCall(len(messages), len(resp.ToolCalls), modelDur)
+		metrics.ModelCalls++
+		if resp != nil {
+			metrics.addUsage(resp.Usage)
+		}
+
+		dbg.printModelCall(len(messages), lenToolCalls(resp), modelDur)
 		if a.trace != nil && a.trace.OnModelCall != nil {
 			a.trace.OnModelCall(messages, resp, modelDur)
 		}
 		if err != nil {
 			slog.Error("agnogo: model error", "error", err, "loop", loop)
-			return &Response{Text: a.fallbackText}, nil
+			metrics.Duration = time.Since(runStart)
+			dbg.printRunEnd(runID, metrics)
+			return &Response{Text: a.fallbackText, Metrics: metrics}, nil
 		}
 
 		// Text response — done
@@ -253,7 +283,7 @@ func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (
 				}
 				text = err.Error()
 			}
-			a.debug.printResponse(text)
+			dbg.printResponse(text)
 			session.AddMessage("assistant", text)
 
 			// Memory extraction
@@ -269,7 +299,10 @@ func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (
 				}
 			}
 
-			return &Response{Text: text, ToolsCalled: toolsCalled}, nil
+			metrics.ToolCalls = len(toolsCalled)
+			metrics.Duration = time.Since(runStart)
+			dbg.printRunEnd(runID, metrics)
+			return &Response{Text: text, ToolsCalled: toolsCalled, Metrics: metrics}, nil
 		}
 
 		// Tool calls
@@ -304,6 +337,7 @@ func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (
 				if a.trace != nil && a.trace.OnApproval != nil {
 					a.trace.OnApproval(approval)
 				}
+				dbg.printApproval(tc.Name, tool.ApprovalReason)
 				// Save state for resume
 				session.Set("_pending_tool", tc.Name)
 				session.Set("_pending_args", tc.Arguments)
@@ -311,11 +345,15 @@ func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (
 				if a.storage != nil {
 					a.storage.Save(ctx, session)
 				}
+				metrics.ToolCalls = len(toolsCalled)
+				metrics.Duration = time.Since(runStart)
+				dbg.printRunEnd(runID, metrics)
 				return &Response{
 					Text:          fmt.Sprintf("This action requires approval: %s", tool.ApprovalReason),
 					ToolsCalled:   toolsCalled,
 					NeedsApproval: true,
 					Approval:      &approval,
+					Metrics:       metrics,
 				}, nil
 			}
 
@@ -328,7 +366,7 @@ func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (
 				result = fmt.Sprintf("Tool '%s' failed: %s. Try a different approach.", tc.Name, err.Error())
 			}
 
-			a.debug.printToolCall(tc.Name, args, result, toolDur, err)
+			dbg.printToolCall(tc.Name, args, result, toolDur, err)
 			if a.trace != nil && a.trace.OnToolCall != nil {
 				a.trace.OnToolCall(tc.Name, args, result, toolDur, err)
 			}
@@ -342,7 +380,23 @@ func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (
 	// Max loops
 	slog.Warn("agnogo: max loops reached", "max", a.maxLoops, "session", session.ID)
 	session.AddMessage("assistant", a.fallbackText)
-	return &Response{Text: a.fallbackText, ToolsCalled: toolsCalled}, nil
+	metrics.ToolCalls = len(toolsCalled)
+	metrics.Duration = time.Since(runStart)
+	dbg.printRunEnd(runID, metrics)
+	return &Response{Text: a.fallbackText, ToolsCalled: toolsCalled, Metrics: metrics}, nil
+}
+
+func lenToolCalls(r *ModelResponse) int {
+	if r == nil {
+		return 0
+	}
+	return len(r.ToolCalls)
+}
+
+func generateRunID() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return fmt.Sprintf("run_%x", b)
 }
 
 // Resume continues after a human approval.

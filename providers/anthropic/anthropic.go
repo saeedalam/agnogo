@@ -122,6 +122,10 @@ func (p *Provider) ChatCompletion(ctx context.Context, messages []agnogo.Message
 			Name  string          `json:"name"`
 			Input json.RawMessage `json:"input"`
 		} `json:"content"`
+		Usage *struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+		} `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
@@ -136,6 +140,13 @@ func (p *Provider) ChatCompletion(ctx context.Context, messages []agnogo.Message
 			mr.ToolCalls = append(mr.ToolCalls, agnogo.ToolCall{
 				ID: c.ID, Name: c.Name, Arguments: string(c.Input),
 			})
+		}
+	}
+	if result.Usage != nil {
+		mr.Usage = &agnogo.Usage{
+			InputTokens:  result.Usage.InputTokens,
+			OutputTokens: result.Usage.OutputTokens,
+			TotalTokens:  result.Usage.InputTokens + result.Usage.OutputTokens,
 		}
 	}
 	return mr, nil
