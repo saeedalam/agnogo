@@ -29,6 +29,7 @@ type Agent struct {
 	promptFunc   func(session *Session) string
 	knowledge    Knowledge
 	knowledgeN   int
+	reasoning    *ReasoningConfig
 	memory       MemoryExtractor
 	storage      Storage
 	trace        *Trace
@@ -47,6 +48,7 @@ type Config struct {
 	Instructions string                        // static system prompt
 	PromptFunc   func(session *Session) string // dynamic prompt (overrides Instructions)
 	Knowledge    Knowledge                     // auto-search for questions (optional)
+	Reasoning    *ReasoningConfig              // chain-of-thought before responding (optional)
 	KnowledgeN   int                           // max knowledge results (default 3)
 	AutoMemory   bool                          // pattern-based memory extraction
 	Memory       MemoryExtractor               // custom memory extractor (overrides AutoMemory)
@@ -93,6 +95,7 @@ func New(cfg Config) *Agent {
 		promptFunc:   cfg.PromptFunc,
 		knowledge:    cfg.Knowledge,
 		knowledgeN:   knowledgeN,
+		reasoning:    cfg.Reasoning,
 		memory:       mem,
 		storage:      cfg.Storage,
 		trace:        cfg.Trace,
@@ -182,6 +185,14 @@ func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (
 	messages = append(messages, session.History...)
 	session.AddMessage("user", userMessage)
 	messages = append(messages, Message{Role: "user", Content: userMessage})
+
+	// Reasoning (chain-of-thought before responding)
+	if a.reasoning != nil && a.reasoning.Enabled {
+		_, reasoningContext := runReasoning(ctx, a.reasoning, a.model, userMessage, session)
+		if reasoningContext != "" {
+			messages = append(messages, Message{Role: "system", Content: reasoningContext})
+		}
+	}
 
 	// Knowledge injection
 	if a.knowledge != nil {

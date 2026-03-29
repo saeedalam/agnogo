@@ -172,3 +172,98 @@ func (w *LoopWorkflow) Run(ctx context.Context, session *Session, input string) 
 
 	return lastResp, nil
 }
+
+// ── Condition Workflow ───────────────────────────────────
+// Matches Agno's Condition: evaluate → true branch or false branch.
+//
+//	wf := agnogo.Condition(
+//	    func(ctx context.Context, input string) bool { return strings.Contains(input, "urgent") },
+//	    agnogo.Sequential(urgentStep1, urgentStep2), // true branch
+//	    agnogo.Sequential(normalStep1),              // false branch (optional)
+//	)
+
+// Workflow is the interface all workflow types implement.
+type Workflow interface {
+	Run(ctx context.Context, session *Session, input string) (*Response, error)
+}
+
+// ConditionWorkflow executes different branches based on a condition.
+type ConditionWorkflow struct {
+	evaluator func(ctx context.Context, input string) bool
+	trueBranch  Workflow
+	falseBranch Workflow // optional
+}
+
+// Condition creates a conditional workflow.
+func Condition(eval func(ctx context.Context, input string) bool, trueBranch Workflow, falseBranch ...Workflow) *ConditionWorkflow {
+	var fb Workflow
+	if len(falseBranch) > 0 {
+		fb = falseBranch[0]
+	}
+	return &ConditionWorkflow{evaluator: eval, trueBranch: trueBranch, falseBranch: fb}
+}
+
+func (w *ConditionWorkflow) Run(ctx context.Context, session *Session, input string) (*Response, error) {
+	if w.evaluator(ctx, input) {
+		slog.Debug("agnogo: condition=true, executing true branch")
+		return w.trueBranch.Run(ctx, session, input)
+	}
+	if w.falseBranch != nil {
+		slog.Debug("agnogo: condition=false, executing false branch")
+		return w.falseBranch.Run(ctx, session, input)
+	}
+	slog.Debug("agnogo: condition=false, no false branch, skipping")
+	return &Response{Text: input}, nil // pass through
+}
+
+// ── Router Workflow ──────────────────────────────────────
+// Matches Agno's Router: select a path from multiple choices.
+//
+//	wf := agnogo.Route(
+//	    func(ctx context.Context, input string) string {
+//	        if strings.Contains(input, "book") { return "booking" }
+//	        return "support"
+//	    },
+//	    map[string]Workflow{
+//	        "booking": bookingWorkflow,
+//	        "support": supportWorkflow,
+//	    },
+//	)
+
+// RouterWorkflow selects one workflow from a map based on a selector function.
+type RouterWorkflow struct {
+	selector func(ctx context.Context, input string) string
+	routes   map[string]Workflow
+	fallback string
+}
+
+// Route creates a router workflow.
+func Route(selector func(ctx context.Context, input string) string, routes map[string]Workflow) *RouterWorkflow {
+	var fallback string
+	for name := range routes {
+		fallback = name
+		break
+	}
+	return &RouterWorkflow{selector: selector, routes: routes, fallback: fallback}
+}
+
+// WithFallback sets the default route name if selector returns unknown.
+func (w *RouterWorkflow) WithFallback(name string) *RouterWorkflow {
+	w.fallback = name
+	return w
+}
+
+func (w *RouterWorkflow) Run(ctx context.Context, session *Session, input string) (*Response, error) {
+	selected := w.selector(ctx, input)
+	slog.Debug("agnogo: router selected", "route", selected)
+
+	wf, ok := w.routes[selected]
+	if !ok {
+		wf = w.routes[w.fallback]
+		if wf == nil {
+			return &Response{Text: fmt.Sprintf("No route found for: %s", selected)}, nil
+		}
+	}
+	session.Set("_routed_to", selected)
+	return wf.Run(ctx, session, input)
+}
