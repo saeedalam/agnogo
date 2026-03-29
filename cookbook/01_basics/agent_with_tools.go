@@ -38,7 +38,7 @@ func main() {
 		if err != nil {
 			return "", fmt.Errorf("unknown timezone: %s", args["timezone"])
 		}
-		return time.Now().In(loc).Format("15:04 Monday, January 2"), nil
+		return time.Now().In(loc).Format("2006-01-02 15:04 (Monday)"), nil
 	})
 
 	agent.CLI()

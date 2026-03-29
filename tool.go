@@ -136,7 +136,10 @@ func (r *ToolRegistry) SystemPrompt() string {
 
 	var b strings.Builder
 	b.WriteString("\n\n## Tools\n")
-	b.WriteString("You have access to the following tools. Use them when relevant — do NOT guess or make up information that a tool can provide.\n\n")
+	b.WriteString("You have access to the following tools. IMPORTANT RULES:\n")
+	b.WriteString("- Use tools when relevant — do NOT guess or make up information that a tool can provide.\n")
+	b.WriteString("- If a tool needs a parameter you can reasonably infer from context, use your best guess rather than asking the user.\n")
+	b.WriteString("- Call tools proactively — don't ask the user for information the tool can give you.\n\n")
 	for _, name := range r.order {
 		t := r.tools[name]
 		b.WriteString(fmt.Sprintf("- **%s**: %s", t.Name, t.Description))
