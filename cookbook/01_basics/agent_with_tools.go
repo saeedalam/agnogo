@@ -41,5 +41,7 @@ func main() {
 		return time.Now().In(loc).Format("2006-01-02 15:04 (Monday)"), nil
 	})
 
+	agent.HallucinationGuard()
+
 	agent.CLI()
 }

@@ -300,6 +300,16 @@ func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (
 				if a.trace != nil && a.trace.OnGuardrail != nil {
 					a.trace.OnGuardrail("output", "output", true)
 				}
+				dbg.printGuardrail("output", "output", true)
+
+				// If hallucination detected and we have retries left, retry with feedback
+				if strings.Contains(err.Error(), "hallucination-guard") && loop < a.maxLoops-1 {
+					dbg.print(1, "  %s Hallucination detected — retrying with tool instruction", dbg.color(colorYellow, "🔄"))
+					messages = append(messages, Message{Role: "assistant", Content: text})
+					messages = append(messages, Message{Role: "user", Content: "SYSTEM: Your previous response may contain made-up information. You MUST use your tools to get real data before answering. Do NOT guess dates, times, weather, prices, or any factual information. Call the appropriate tool NOW."})
+					continue // retry the loop
+				}
+
 				text = err.Error()
 			}
 			dbg.printResponse(text)
