@@ -21,7 +21,7 @@ func main() {
 
 	agent := agnogo.New(agnogo.Config{
 		Model:        model,
-		Instructions: "You are a helpful assistant with access to tools. Use them when needed.",
+		Instructions: "You are a helpful assistant with access to tools.",
 		Debug:        &debug,
 	})
 
@@ -31,7 +31,7 @@ func main() {
 		return fmt.Sprintf(`{"city": "%s", "temp": 18, "condition": "Partly cloudy", "wind": "12 km/h"}`, args["city"]), nil
 	})
 
-	agent.Tool("get_time", "Get current time in a timezone", agnogo.Params{
+	agent.Tool("get_time", "Get current date and time in a timezone", agnogo.Params{
 		"timezone": {Type: "string", Desc: "Timezone (e.g. Europe/Stockholm)", Required: true},
 	}, func(ctx context.Context, args map[string]string) (string, error) {
 		loc, err := time.LoadLocation(args["timezone"])

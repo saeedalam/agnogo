@@ -210,6 +210,11 @@ func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (
 		systemPrompt = a.promptFunc(session)
 	}
 
+	// Auto-inject tool descriptions into system prompt (like Agno)
+	if a.tools.Count() > 0 {
+		systemPrompt += a.tools.SystemPrompt()
+	}
+
 	messages := []Message{{Role: "system", Content: systemPrompt}}
 	messages = append(messages, session.GetHistory()...)
 	session.AddMessage("user", userMessage)

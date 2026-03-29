@@ -122,6 +122,40 @@ func (r *ToolRegistry) List() []*Tool {
 	return result
 }
 
+// SystemPrompt generates a system prompt section describing all registered tools.
+// Injected automatically into the agent's system prompt so the LLM knows what
+// tools are available and is instructed to use them instead of guessing.
+// Mirrors Agno's automatic tool instruction injection.
+func (r *ToolRegistry) SystemPrompt() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if len(r.order) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("\n\n## Tools\n")
+	b.WriteString("You have access to the following tools. Use them when relevant — do NOT guess or make up information that a tool can provide.\n\n")
+	for _, name := range r.order {
+		t := r.tools[name]
+		b.WriteString(fmt.Sprintf("- **%s**: %s", t.Name, t.Description))
+		if len(t.Parameters) > 0 {
+			params := make([]string, 0, len(t.Parameters))
+			for pName, p := range t.Parameters {
+				req := ""
+				if p.Required {
+					req = ", required"
+				}
+				params = append(params, fmt.Sprintf("`%s` (%s%s)", pName, p.Type, req))
+			}
+			b.WriteString(fmt.Sprintf(" — params: %s", strings.Join(params, ", ")))
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 // FunctionDefs generates OpenAI-compatible function calling definitions.
 // Works with any provider that uses the OpenAI tool format (most do).
 func (r *ToolRegistry) FunctionDefs() []map[string]any {
