@@ -319,12 +319,15 @@ func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (
 			return &Response{Text: text, ToolsCalled: toolsCalled, Metrics: metrics}, nil
 		}
 
-		// Tool calls
+		// Tool calls — save assistant message with tool_calls to both local and session history
 		assistantMsg := Message{Role: "assistant"}
 		for _, tc := range resp.ToolCalls {
 			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, tc)
 		}
 		messages = append(messages, assistantMsg)
+		session.mu.Lock()
+		session.History = append(session.History, assistantMsg)
+		session.mu.Unlock()
 
 		for _, tc := range resp.ToolCalls {
 			args := ParseArgs(tc.Arguments)
