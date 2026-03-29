@@ -1,8 +1,16 @@
 # agno-go
 
-A lightweight Go agent development kit inspired by [Agno](https://github.com/agno-agi/agno).
+A lightweight Go agent development kit inspired by [Agno](https://github.com/agno-agi/agno) (Python, 39k+ stars).
 
 Build AI agents with tools, knowledge, memory, teams, and guardrails — in pure Go.
+
+**Zero external dependencies.** One package. ~900 lines. 28 tests.
+
+## Install
+
+```bash
+go get github.com/saeedalam/agnogo
+```
 
 ## Quick Start
 
@@ -20,14 +28,13 @@ import (
 func main() {
     agent := agnogo.New(agnogo.Config{
         Model:        agnogo.OpenAI(os.Getenv("OPENAI_API_KEY"), "gpt-4.1-mini"),
-        Instructions: "You are a helpful assistant.",
-        AutoMemory:   true,
+        Instructions: "You are a helpful assistant. Be concise.",
     })
 
     agent.Tool("weather", "Get weather for a city", agnogo.Params{
         "city": {Type: "string", Desc: "City name", Required: true},
     }, func(ctx context.Context, args map[string]string) (string, error) {
-        return fmt.Sprintf("Weather in %s: Sunny, 22°C", args["city"]), nil
+        return fmt.Sprintf("Sunny, 22°C in %s", args["city"]), nil
     })
 
     session := agnogo.NewSession("user-1")
@@ -38,44 +45,26 @@ func main() {
 
 ## Features
 
-| Feature | Description |
-|---------|-------------|
-| **Agent** | Stateful agent with tool-calling loop |
-| **Tools** | Register any Go function as a tool |
-| **Knowledge** | Auto RAG injection for questions |
-| **Memory** | Auto-extract facts from conversation |
-| **Storage** | Persist sessions to any database |
-| **Guardrails** | Input/output validation hooks |
-| **Teams** | Route to sub-agents by intent |
-| **Human-in-the-loop** | Require approval before tool execution |
-| **Streaming** | Stream responses for WebSocket/SSE |
-| **Tracing** | Hooks for every agent decision |
-| **Providers** | OpenAI built-in, any LLM via interface |
+- **Tools** — register any Go function as a tool
+- **Knowledge** — auto RAG injection for questions
+- **Memory** — learn facts from conversations
+- **Storage** — persist sessions to any database
+- **Guardrails** — block bad input/output
+- **Teams** — route to sub-agents by intent
+- **Human-in-the-loop** — require approval before actions
+- **Streaming** — stream responses for WebSocket/SSE
+- **Tracing** — hooks for every agent decision
+- **Providers** — OpenAI built-in, any LLM via interface
 
 ## Tools
 
 ```go
-// Register any Go function
 agent.Tool("search", "Search the web", agnogo.Params{
     "query": {Type: "string", Desc: "Search query", Required: true},
-}, mySearchFunc)
+}, searchFn)
 
-// Tool with human approval
-agent.ToolWithApproval("transfer", "Transfer money", params, transferFunc,
-    "Amounts over 1000 need approval")
-```
-
-## Teams
-
-```go
-team := agnogo.NewTeam(agnogo.TeamConfig{
-    Model: agnogo.OpenAI(key, "gpt-4.1-mini"),
-})
-team.Agent("booking", bookingAgent)
-team.Agent("support", supportAgent)
-
-resp, _ := team.Run(ctx, session, "I want to book a haircut")
-// → routes to "booking" agent
+agent.Tool("send_email", "Send email", params, sendEmailFn)
+agent.Tool("create_ticket", "Create ticket", params, createTicketFn)
 ```
 
 ## Knowledge (RAG)
@@ -86,34 +75,64 @@ agent := agnogo.New(agnogo.Config{
         return myVectorDB.Search(ctx, query, limit)
     }),
 })
-// Agent auto-searches for questions — no explicit tool call needed
 ```
 
-## Human-in-the-loop
+## Memory
 
 ```go
-resp, _ := agent.Run(ctx, session, "Transfer $5000 to Alice")
+agent := agnogo.New(agnogo.Config{AutoMemory: true})
+// "My name is Erik" → session.GetMemory("name") == "Erik"
+```
+
+## Teams
+
+```go
+team := agnogo.NewTeam(agnogo.TeamConfig{Model: model})
+team.Agent("booking", bookingAgent)
+team.Agent("support", supportAgent)
+resp, _ := team.Run(ctx, session, "I want to book a haircut")
+```
+
+## Human-in-the-Loop
+
+```go
+agent.ToolWithApproval("delete", "Delete account", params, deleteFn, "Requires admin approval")
+resp, _ := agent.Run(ctx, session, "Delete my account")
 if resp.NeedsApproval {
-    fmt.Println("Approval needed:", resp.Approval.Reason)
-    // Human reviews → approves
-    resp, _ = agent.Resume(ctx, session, true)
+    resp, _ = agent.Resume(ctx, session, true) // approve
 }
 ```
 
-## Storage
+## Guardrails
 
 ```go
-// Built-in memory storage (for testing)
-agent := agnogo.New(agnogo.Config{
-    Storage: agnogo.NewMemoryStorage(),
+agent.InputGuardrail("no-spam", func(ctx context.Context, s *agnogo.Session, msg string) error {
+    if isSpam(msg) { return errors.New("Spam blocked.") }
+    return nil
 })
-
-// Or implement the interface for your database
-type Storage interface {
-    Load(ctx context.Context, sessionID string) (*Session, error)
-    Save(ctx context.Context, session *Session) error
-}
 ```
+
+## Tracing
+
+```go
+agent := agnogo.New(agnogo.Config{Trace: agnogo.DefaultTrace()})
+// Logs every model call, tool call, knowledge search, memory extraction
+```
+
+## Comparison with Agno
+
+| Feature | Agno (Python) | agno-go |
+|---------|--------------|---------|
+| Tools | ✅ `@tool` | ✅ `agent.Tool()` |
+| Knowledge | ✅ | ✅ `KnowledgeFunc()` |
+| Memory | ✅ | ✅ `AutoMemory` |
+| Storage | ✅ | ✅ Interface |
+| Guardrails | ✅ | ✅ |
+| Teams | ✅ | ✅ |
+| Human-in-the-loop | ✅ | ✅ |
+| Streaming | ✅ | ✅ |
+| Tracing | ✅ | ✅ |
+| Dependencies | Many | **Zero** |
 
 ## License
 
