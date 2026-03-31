@@ -2,7 +2,7 @@
 
 Go agent framework. Build, serve, and scale AI agents.
 
-243 tests | 35 built-in tools (15 core + 20 utility) | 10 LLM providers | zero external dependencies
+243 tests | 15 core tools + 37 contrib integrations | 10 LLM providers | zero external dependencies
 
 ```bash
 go get github.com/saeedalam/agnogo
@@ -102,25 +102,53 @@ Other options: `WithTools(...)`, `WithStorage(s)`, `WithKnowledge(k)`, `WithMemo
 
 ## Tools
 
+### Core (maintained, production-grade)
+
 ```go
 import "github.com/saeedalam/agnogo/tools"
 ```
 
-**Core:** `Calculator()`, `Shell()`, `HTTP()`, `File(baseDir)`, `SQL(db, readOnly)`
-
-**Web:** `WebBrowser()`, `DuckDuckGo()`, `Wikipedia()`, `GoogleSearch(apiKey, cx)`
-
-**Data:** `JSON()`, `CSV()`, `YAML()`, `XML()`, `Regex()`, `Diff()`, `Markdown()`, `PDFTool()`, `ImageTool()`
-
-**DevOps:** `Docker()`, `GitHub(token)`, `Slack(token)`, `Email(host, port, user, pass, from)`, `DNS()`, `TCP()`
-
-**Utility:** `Base64()`, `Hash()`, `UUID()`, `TimeTool()`, `Env(allowlist...)`, `TemplateTool()`, `Archive()`, `Crypto()`, `CronTool()`, `Semver()`, `MetricsTool()`
+| Tool | What it does |
+|------|-------------|
+| `Calculator()` | Expression parser (precedence, functions, parentheses) |
+| `Shell()` | Execute commands (allowlist, timeout, stdout/stderr) |
+| `HTTP()` | Full HTTP client (headers, auth, configurable limits) |
+| `File(baseDir)` | Read/write/list/append (atomic writes, symlink protection) |
+| `SQL(db, readOnly)` | Queries with pagination, parameterized, schema listing |
+| `JSON()` | Parse, format, validate, merge, JSONPath queries |
+| `CSV()` | CSV to JSON conversion |
+| `WebBrowser()` | Fetch URLs, extract links, HTML stripping |
+| `DuckDuckGo()` | Web search |
+| `Wikipedia()` | Article summaries |
+| `GitHub(token)` | Repos, issues, PRs (pagination, rate limit aware) |
+| `Slack(token)` | Messages, channels, threads, reactions |
+| `Email(host, port, user, pass, from)` | SMTP email |
+| `Docker()` | Containers, images, build (resource limits) |
+| `Regex()` | Match, replace, extract with named groups |
+| `Hash()` | SHA256, SHA512, MD5, HMAC |
+| `TimeTool()` | Current time, timezone conversion, date math |
 
 ```go
 agent := agnogo.Agent("You are helpful.",
-    agnogo.WithTools(tools.Calculator(), tools.DuckDuckGo(), tools.Shell()),
+    agnogo.Tools(tools.Calculator()...), agnogo.Tools(tools.Shell()...),
 )
 ```
+
+### Contrib (community, best-effort)
+
+```go
+import "github.com/saeedalam/agnogo/tools/contrib"
+```
+
+37 API integrations: Discord, Telegram, WhatsApp, Jira, Notion, Linear, GitLab, Reddit, YouTube, HackerNews, ArXiv, Giphy, Unsplash, OpenWeather, YFinance, Google Maps/Calendar/Sheets, and more. See [tools/contrib/README.md](tools/contrib/README.md).
+
+```go
+agent := agnogo.Agent("You are helpful.",
+    agnogo.Tools(contrib.HackerNews()...), agnogo.Tools(contrib.OpenWeather(apiKey)...),
+)
+```
+
+APIs change -- if a contrib tool breaks, PRs welcome.
 
 ## Typed Tools
 
