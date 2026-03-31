@@ -403,9 +403,18 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 				}, nil
 			}
 
-			// Execute tool
+			// Execute tool with panic recovery
 			toolStart := time.Now()
-			result, err := a.tools.Invoke(ctx, tc.Name, args)
+			result, err := func() (r string, e error) {
+				defer func() {
+					if p := recover(); p != nil {
+						r = fmt.Sprintf("Tool '%s' panicked: %v. Try a different approach.", tc.Name, p)
+						e = nil
+						slog.Error("agnogo: tool panic recovered", "tool", tc.Name, "panic", p)
+					}
+				}()
+				return a.tools.Invoke(ctx, tc.Name, args)
+			}()
 			toolDur := time.Since(toolStart)
 
 			if err != nil {

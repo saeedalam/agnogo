@@ -5,23 +5,10 @@
 package openai
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"time"
 
 	"github.com/saeedalam/agnogo"
 )
-
-// sharedOpenAITransport pools connections across OpenAI provider instances.
-var sharedOpenAITransport = &http.Transport{
-	MaxIdleConns:        100,
-	MaxIdleConnsPerHost: 10,
-	IdleConnTimeout:     90 * time.Second,
-}
 
 // Provider implements agnogo.ModelProvider for OpenAI.
 type Provider struct {
@@ -29,7 +16,6 @@ type Provider struct {
 	model   string
 	baseURL string
 	cfg     agnogo.ModelConfig
-	client  *http.Client
 }
 
 // New creates an OpenAI provider.
@@ -40,14 +26,20 @@ func New(apiKey, model string, cfgs ...agnogo.ModelConfig) *Provider {
 	cfg := agnogo.DefaultModelConfig()
 	if len(cfgs) > 0 {
 		c := cfgs[0]
-		if c.MaxTokens > 0 { cfg.MaxTokens = c.MaxTokens }
-		if c.Temperature > 0 { cfg.Temperature = c.Temperature }
-		if c.Timeout > 0 { cfg.Timeout = c.Timeout }
+		if c.MaxTokens > 0 {
+			cfg.MaxTokens = c.MaxTokens
+		}
+		if c.Temperature > 0 {
+			cfg.Temperature = c.Temperature
+		}
+		if c.Timeout > 0 {
+			cfg.Timeout = c.Timeout
+		}
 	}
 	return &Provider{
 		apiKey: apiKey, model: model,
 		baseURL: "https://api.openai.com/v1",
-		cfg: cfg, client: &http.Client{Timeout: cfg.Timeout, Transport: sharedOpenAITransport},
+		cfg:     cfg,
 	}
 }
 
@@ -58,109 +50,10 @@ func (p *Provider) WithBaseURL(url string) *Provider {
 }
 
 func (p *Provider) ChatCompletion(ctx context.Context, messages []agnogo.Message, tools []map[string]any) (*agnogo.ModelResponse, error) {
-	oaiMsgs := make([]map[string]any, 0, len(messages))
-	for _, m := range messages {
-		msg := map[string]any{"role": m.Role, "content": m.Content}
-		if m.Name != "" && m.Role == "tool" {
-			msg["tool_call_id"] = m.Name
-		}
-		if len(m.ToolCalls) > 0 {
-			calls := make([]map[string]any, len(m.ToolCalls))
-			for i, tc := range m.ToolCalls {
-				calls[i] = map[string]any{
-					"id": tc.ID, "type": "function",
-					"function": map[string]string{"name": tc.Name, "arguments": tc.Arguments},
-				}
-			}
-			msg["tool_calls"] = calls
-			if m.Content == "" {
-				delete(msg, "content")
-			}
-		}
-		oaiMsgs = append(oaiMsgs, msg)
-	}
-
-	body := map[string]any{
-		"model": p.model, "messages": oaiMsgs,
-		"max_tokens": p.cfg.MaxTokens, "temperature": p.cfg.Temperature,
-	}
-	if len(tools) > 0 {
-		body["tools"] = tools
-	}
-
-	bodyJSON, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("openai: marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/chat/completions", bytes.NewReader(bodyJSON))
-	if err != nil {
-		return nil, fmt.Errorf("openai: create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.apiKey)
-
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("openai: HTTP request to %s failed: %w", p.baseURL, err)
-	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("openai: read response: %w", err)
-	}
-	if resp.StatusCode != 200 {
-		return nil, agnogo.ParseProviderError("openai", resp.StatusCode, data, resp.Header)
-	}
-
-	var result struct {
-		Choices []struct {
-			Message struct {
-				Content   *string `json:"content"`
-				ToolCalls []struct {
-					ID       string `json:"id"`
-					Function struct {
-						Name      string `json:"name"`
-						Arguments string `json:"arguments"`
-					} `json:"function"`
-				} `json:"tool_calls"`
-			} `json:"message"`
-		} `json:"choices"`
-		Usage *struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
-		} `json:"usage"`
-	}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, fmt.Errorf("openai: parse response JSON: %w", err)
-	}
-	if len(result.Choices) == 0 {
-		return nil, fmt.Errorf("openai: empty response from %s (model: %s)", p.baseURL, p.model)
-	}
-
-	choice := result.Choices[0].Message
-	mr := &agnogo.ModelResponse{}
-	if choice.Content != nil {
-		mr.Text = *choice.Content
-	}
-	for _, tc := range choice.ToolCalls {
-		mr.ToolCalls = append(mr.ToolCalls, agnogo.ToolCall{
-			ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments,
-		})
-	}
-	if result.Usage != nil {
-		mr.Usage = &agnogo.Usage{
-			InputTokens:  result.Usage.PromptTokens,
-			OutputTokens: result.Usage.CompletionTokens,
-			TotalTokens:  result.Usage.TotalTokens,
-		}
-	}
-	return mr, nil
+	return agnogo.OpenAIChatCompletion(ctx, p.apiKey, p.model, p.baseURL, p.cfg, messages, tools)
 }
 
 // ChatCompletionStream implements agnogo.StreamProvider for real token-level streaming.
 func (p *Provider) ChatCompletionStream(ctx context.Context, messages []agnogo.Message, tools []map[string]any) (<-chan agnogo.StreamEvent, error) {
-	return agnogo.OpenAIStreamResponse(ctx, p.apiKey, p.model, p.baseURL, messages, tools, p.cfg)
+	return agnogo.OpenAIChatCompletionStream(ctx, p.apiKey, p.model, p.baseURL, p.cfg, messages, tools)
 }

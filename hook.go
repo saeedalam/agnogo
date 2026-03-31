@@ -1,6 +1,9 @@
 package agnogo
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // Hook is a function that wraps an agent run. It receives the agent, session,
 // message, and a next function to call. Hooks can modify inputs, inspect outputs,
@@ -57,5 +60,16 @@ func (a *Core) runWithHooks(ctx context.Context, session *Session, userMessage s
 		}
 	}
 
-	return chain(ctx, a, session, userMessage)
+	// Execute with panic recovery
+	var resp *Response
+	var err error
+	func() {
+		defer func() {
+			if p := recover(); p != nil {
+				err = fmt.Errorf("agnogo: hook panicked: %v", p)
+			}
+		}()
+		resp, err = chain(ctx, a, session, userMessage)
+	}()
+	return resp, err
 }
