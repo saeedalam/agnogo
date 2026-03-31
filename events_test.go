@@ -85,3 +85,66 @@ func TestEventBusTrace(t *testing.T) {
 		}
 	}
 }
+
+func TestEventBusOnAll(t *testing.T) {
+	bus := NewEventBus()
+
+	var received []EventType
+	bus.OnAll(func(e Event) {
+		received = append(received, e.Type)
+	})
+
+	bus.Emit(Event{Type: EventModelCall})
+	bus.Emit(Event{Type: EventToolCall})
+	bus.Emit(Event{Type: EventRunStart})
+
+	if len(received) != 3 {
+		t.Fatalf("got %d events, want 3", len(received))
+	}
+	want := []EventType{EventModelCall, EventToolCall, EventRunStart}
+	for i, w := range want {
+		if received[i] != w {
+			t.Errorf("received[%d] = %q, want %q", i, received[i], w)
+		}
+	}
+}
+
+func TestEventBusFilter(t *testing.T) {
+	bus := NewEventBus()
+	filtered := bus.Filter(EventModelCall, EventModelDone)
+
+	var received []EventType
+	filtered.On(EventModelCall, func(e Event) { received = append(received, e.Type) })
+	filtered.On(EventModelDone, func(e Event) { received = append(received, e.Type) })
+	filtered.On(EventToolCall, func(e Event) { received = append(received, e.Type) })
+
+	bus.Emit(Event{Type: EventModelCall})
+	bus.Emit(Event{Type: EventToolCall})  // should NOT reach filtered bus
+	bus.Emit(Event{Type: EventModelDone})
+
+	if len(received) != 2 {
+		t.Fatalf("got %d events, want 2: %v", len(received), received)
+	}
+	if received[0] != EventModelCall {
+		t.Errorf("received[0] = %q, want %q", received[0], EventModelCall)
+	}
+	if received[1] != EventModelDone {
+		t.Errorf("received[1] = %q, want %q", received[1], EventModelDone)
+	}
+}
+
+func TestEventBusEventCount(t *testing.T) {
+	bus := NewEventBus()
+
+	if bus.EventCount() != 0 {
+		t.Fatalf("initial count = %d, want 0", bus.EventCount())
+	}
+
+	bus.Emit(Event{Type: EventModelCall})
+	bus.Emit(Event{Type: EventToolCall})
+	bus.Emit(Event{Type: EventRunEnd})
+
+	if bus.EventCount() != 3 {
+		t.Errorf("count = %d, want 3", bus.EventCount())
+	}
+}

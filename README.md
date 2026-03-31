@@ -2,7 +2,7 @@
 
 Go agent framework. Build, serve, and scale AI agents.
 
-222 tests | 35 built-in tools | 10 LLM providers | zero external dependencies
+243 tests | 35 built-in tools (15 core + 20 utility) | 10 LLM providers | zero external dependencies
 
 ```bash
 go get github.com/saeedalam/agnogo

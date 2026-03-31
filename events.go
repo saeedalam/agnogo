@@ -3,6 +3,7 @@ package agnogo
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -45,8 +46,10 @@ type EventHandler func(Event)
 //	})
 //	agent := agnogo.Agent("...", agnogo.WithEvents(bus))
 type EventBus struct {
-	mu       sync.RWMutex
-	handlers map[EventType][]EventHandler
+	mu          sync.RWMutex
+	handlers    map[EventType][]EventHandler
+	allHandlers []EventHandler
+	eventCount  atomic.Int64
 }
 
 // NewEventBus creates a new event bus with no subscribers.
@@ -63,16 +66,48 @@ func (eb *EventBus) On(eventType EventType, handler EventHandler) {
 	eb.handlers[eventType] = append(eb.handlers[eventType], handler)
 }
 
-// Emit publishes an event to all registered handlers for that event type.
+// OnAll registers a handler that receives ALL event types.
+func (eb *EventBus) OnAll(handler EventHandler) {
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+	eb.allHandlers = append(eb.allHandlers, handler)
+}
+
+// Filter returns a new EventBus that only forwards matching events.
+// It subscribes to the parent bus for the specified types and re-emits
+// each matching event to the child bus.
+func (eb *EventBus) Filter(types ...EventType) *EventBus {
+	child := NewEventBus()
+	for _, t := range types {
+		t := t // capture loop var
+		eb.On(t, func(e Event) {
+			child.Emit(e)
+		})
+	}
+	return child
+}
+
+// EventCount returns the number of events emitted (atomic counter).
+func (eb *EventBus) EventCount() int64 {
+	return eb.eventCount.Load()
+}
+
+// Emit publishes an event to all registered handlers for that event type,
+// plus any handlers registered via OnAll. Increments the atomic event counter.
 // If event.Timestamp is zero, it is set to time.Now().
 func (eb *EventBus) Emit(event Event) {
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
 	}
+	eb.eventCount.Add(1)
 	eb.mu.RLock()
 	handlers := eb.handlers[event.Type]
+	all := eb.allHandlers
 	eb.mu.RUnlock()
 	for _, h := range handlers {
+		h(event)
+	}
+	for _, h := range all {
 		h(event)
 	}
 }
