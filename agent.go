@@ -47,6 +47,9 @@ type Core struct {
 	hooks               []Hook
 	summarizeThreshold  int
 	summarizeKeepRecent int
+	costBudget          *CostBudget
+	toolValidator       *ToolValidator
+	confidenceThreshold float64
 }
 
 // Config configures a new Core.
@@ -260,6 +263,12 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 	var toolsCalled []string
 	dupes := map[string]int{}
 
+	// Cost tracking
+	var costTracker *runCostTracker
+	if a.costBudget != nil {
+		costTracker = newRunCostTracker(a.costBudget)
+	}
+
 	// Agent loop
 	for loop := 0; loop < a.maxLoops; loop++ {
 		// Check for context cancellation between iterations
@@ -286,6 +295,20 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 		metrics.ModelCalls++
 		if resp != nil {
 			metrics.addUsage(resp.Usage)
+		}
+
+		// Cost budget check
+		if costTracker != nil && resp != nil && resp.Usage != nil {
+			costTracker.addUsage("gpt-4.1-mini", resp.Usage) // default pricing
+			setSessionCost(session, getSessionCost(session)+costTracker.totalCost())
+			if err := costTracker.checkBudget(session); err != nil {
+				metrics.Duration = time.Since(runStart)
+				dbg.printRunEnd(runID, metrics)
+				if a.costBudget.MaxPerRun > 0 && costTracker.runCost > a.costBudget.MaxPerRun {
+					return &Response{Text: "I've reached my cost limit for this request. Please try a simpler question.", Metrics: metrics}, nil
+				}
+				return &Response{Text: "This session has reached its cost limit.", Metrics: metrics}, nil
+			}
 		}
 
 		dbg.printModelCall(len(messages), lenToolCalls(resp), modelDur)

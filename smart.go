@@ -55,7 +55,11 @@ type smartConfig struct {
 	hooks              []Hook
 	summarizeThreshold  int
 	summarizeKeepRecent int
-	unsafe             bool
+	unsafe              bool
+	costBudget          *CostBudget
+	piiConfig           *PIIConfig
+	toolValidator       *ToolValidator
+	confidenceThreshold float64
 }
 
 // registeredProvider holds the information needed to auto-detect a provider
@@ -145,6 +149,26 @@ func Agent(instructions string, opts ...Option) *Core {
 
 	if len(sc.tools) > 0 {
 		a.AddTools(sc.tools...)
+	}
+
+	if sc.costBudget != nil {
+		a.costBudget = sc.costBudget
+	}
+
+	if sc.toolValidator != nil {
+		a.toolValidator = sc.toolValidator
+	}
+	if sc.confidenceThreshold > 0 {
+		a.confidenceThreshold = sc.confidenceThreshold
+	}
+
+	if sc.piiConfig != nil {
+		if sc.piiConfig.RedactInput {
+			a.inputGuards = append(a.inputGuards, piiInputGuardrail(sc.piiConfig))
+		}
+		if sc.piiConfig.BlockOutput {
+			a.outputGuards = append(a.outputGuards, piiOutputGuardrail(sc.piiConfig))
+		}
 	}
 
 	if !sc.unsafe {
