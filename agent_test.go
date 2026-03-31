@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -12,11 +13,14 @@ import (
 // ── Mock Model Provider ──────────────────────────────────
 
 type mockModel struct {
+	mu        sync.Mutex
 	responses []ModelResponse
 	callCount int
 }
 
 func (m *mockModel) ChatCompletion(_ context.Context, messages []Message, tools []map[string]any) (*ModelResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.callCount >= len(m.responses) {
 		return &ModelResponse{Text: "No more responses"}, nil
 	}

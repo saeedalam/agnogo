@@ -2,25 +2,18 @@
 
 // Simple agent — interactive chat.
 //
-//	source .env && go run ./cookbook/01_basics/simple_agent.go
+//	OPENAI_API_KEY=sk-... go run ./cookbook/01_basics/simple_agent.go
+//
+// Or with a specific provider:
+//
+//	agent := agnogo.Agent("...", agnogo.WithOpenAI())
+//	agent := agnogo.Agent("...", agnogo.WithAnthropic())
+//	agent := agnogo.Agent("...", agnogo.WithOllama())
 package main
 
-import (
-	"os"
-
-	"github.com/saeedalam/agnogo"
-	"github.com/saeedalam/agnogo/providers/openai"
-)
+import "github.com/saeedalam/agnogo"
 
 func main() {
-	model := openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4.1-mini")
-	debug := agnogo.DefaultDebug()
-
-	agent := agnogo.New(agnogo.Config{
-		Model:        model,
-		Instructions: "You are a helpful assistant. Be concise.",
-		Debug:        &debug,
-	})
-
+	agent := agnogo.Agent("You are a helpful assistant. Be concise.", agnogo.Debug)
 	agent.CLI()
 }

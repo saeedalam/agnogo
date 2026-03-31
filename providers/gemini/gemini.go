@@ -11,9 +11,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/saeedalam/agnogo"
 )
+
+// sharedGeminiTransport pools connections across Gemini provider instances.
+var sharedGeminiTransport = &http.Transport{
+	MaxIdleConns:        100,
+	MaxIdleConnsPerHost: 10,
+	IdleConnTimeout:     90 * time.Second,
+}
 
 // Provider implements agnogo.ModelProvider for Google Gemini.
 type Provider struct {
@@ -34,7 +42,7 @@ func New(apiKey, model string, cfgs ...agnogo.ModelConfig) *Provider {
 	}
 	return &Provider{
 		apiKey: apiKey, model: model, cfg: cfg,
-		client: &http.Client{Timeout: cfg.Timeout},
+		client: &http.Client{Timeout: cfg.Timeout, Transport: sharedGeminiTransport},
 	}
 }
 
@@ -114,22 +122,28 @@ func (p *Provider) ChatCompletion(ctx context.Context, messages []agnogo.Message
 	}
 
 	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", p.model, p.apiKey)
-	bodyJSON, _ := json.Marshal(body)
-	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyJSON))
+	bodyJSON, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("gemini: marshal request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyJSON))
+	if err != nil {
+		return nil, fmt.Errorf("gemini: create request: %w", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("gemini request: %w", err)
+		return nil, fmt.Errorf("gemini: HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("gemini read body: %w", err)
+		return nil, fmt.Errorf("gemini: read response: %w", err)
 	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("gemini %d: %s", resp.StatusCode, string(data)[:min(len(data), 300)])
+		return nil, agnogo.ParseProviderError("gemini", resp.StatusCode, data, resp.Header)
 	}
 
 	var result struct {
@@ -151,10 +165,10 @@ func (p *Provider) ChatCompletion(ctx context.Context, messages []agnogo.Message
 		} `json:"usageMetadata"`
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, fmt.Errorf("parse: %w", err)
+		return nil, fmt.Errorf("gemini: parse response JSON: %w", err)
 	}
 	if len(result.Candidates) == 0 {
-		return nil, fmt.Errorf("empty response")
+		return nil, fmt.Errorf("gemini: empty response (model: %s)", p.model)
 	}
 
 	mr := &agnogo.ModelResponse{}

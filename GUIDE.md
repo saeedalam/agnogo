@@ -1,4 +1,4 @@
-# agnogo — Complete Guide
+# agnogo -- Complete Guide
 
 ## Installation
 
@@ -8,7 +8,7 @@ go get github.com/saeedalam/agnogo
 
 ## Quick Start
 
-The easiest way -- auto-detect your provider from environment variables:
+Single import, no autodetect needed:
 
 ```go
 package main
@@ -18,7 +18,6 @@ import (
     "fmt"
 
     "github.com/saeedalam/agnogo"
-    _ "github.com/saeedalam/agnogo/autodetect"
 )
 
 func main() {
@@ -26,6 +25,13 @@ func main() {
     answer, _ := agent.Ask(context.Background(), "Hello!")
     fmt.Println(answer)
 }
+```
+
+Or specify a provider explicitly (no env vars needed):
+
+```go
+agent := agnogo.Agent("You are helpful.", agnogo.WithOpenAI())
+agent := agnogo.Agent("You are helpful.", agnogo.WithAnthropic("claude-sonnet-4-5-20250514"))
 ```
 
 Power-user mode -- explicit provider, tools, memory, and debug:
@@ -85,6 +91,43 @@ err := agnogo.AskStructured[MyStruct](ctx, agent, "Extract the data", &result)
 
 ---
 
+## Error Handling
+
+All provider and tool errors are structured. Error classification uses package-level
+functions, not methods on the error value:
+
+```go
+resp, err := agent.Run(ctx, session, msg)
+if err != nil {
+    if agnogo.IsRateLimited(err) {
+        delay := agnogo.RetryAfter(err)
+        time.Sleep(delay)
+        // retry...
+    }
+    if !agnogo.IsRetryable(err) {
+        log.Fatal("permanent error:", err)
+    }
+}
+```
+
+For fine-grained inspection, unwrap to the concrete type:
+
+```go
+var pe *agnogo.ProviderError
+if errors.As(err, &pe) {
+    fmt.Println(pe.Provider, pe.StatusCode)
+}
+
+var te *agnogo.ToolError
+if errors.As(err, &te) {
+    fmt.Println(te.Tool, te.Message, te.Err)
+}
+```
+
+`IsRetryable()` returns true for 429, 500, 502, 503, 504. `IsRateLimited()` returns true for 429. `RetryAfter()` parses the Retry-After header when present.
+
+---
+
 ## Typed Tools
 
 Define tools using Go generics and struct tags instead of manual parameter maps:
@@ -121,6 +164,12 @@ Expose an agent as an HTTP API with one call:
 ```go
 // Quick start -- serves /ask (POST) and /health (GET)
 agent.Serve(":8080")
+
+// With hardening
+agent.Serve(":8080",
+    agnogo.WithMaxConcurrent(100),  // limit concurrent requests
+    agnogo.WithMaxBodySize(1<<20),  // 1 MB max request body
+)
 
 // Or get the http.Handler to mount on your own mux
 mux := http.NewServeMux()
@@ -172,6 +221,10 @@ model := agnogo.RateLimiter(openaiModel, 60) // 60 requests per minute
 
 // Timeout -- per-request deadline
 model := agnogo.TimeoutProvider(openaiModel, 30*time.Second)
+
+// Cleanup -- Close() on providers that implement Closeable
+rl := agnogo.RateLimiter(openaiModel, 60)
+defer agnogo.CloseProvider(rl) // safe no-op if not Closeable
 ```
 
 ---
@@ -254,13 +307,127 @@ Measure agent performance with configurable prompts, warmup, and concurrency:
 
 ```go
 result := agnogo.Benchmark(ctx, agent, agnogo.BenchmarkConfig{
-    Prompts:     []string{"Hello", "What is 2+2?", "Tell me a joke"},
-    Iterations:  10,
-    Warmup:      2,
+    Prompts:     []string{"Hello", "How are you?", "What is Go?"},
     Concurrency: 4,
+    Warmup:      2,
 })
-fmt.Printf("p50=%v p99=%v errors=%d\n", result.P50, result.P99, result.Errors)
+fmt.Printf("Avg: %s, P99: %s, Throughput: %.1f req/s\n",
+    result.AvgLatency, result.P99Latency, result.Throughput)
 ```
+
+BenchmarkConfig fields: `Prompts`, `Concurrency`, `Warmup`.
+BenchmarkResult fields: `P50Latency`, `P95Latency`, `P99Latency`, `AvgLatency`, `ErrorCount`, `Throughput`.
+
+---
+
+## Graph Workflows
+
+Define a directed graph of agents with conditional edges. The graph runs the entry node, then follows edges based on predicates until it reaches an end node:
+
+```go
+g := agnogo.NewGraph()
+g.AddNode("classify", classifyAgent)
+g.AddNode("refund", refundAgent)
+g.AddNode("support", supportAgent)
+
+g.SetEntry("classify")
+g.SetEnd("refund", "support")
+
+// Conditional edge: route to "refund" if the classifier says REFUND
+g.AddEdge("classify", "refund", func(ctx context.Context, state *agnogo.GraphState) bool {
+    return strings.Contains(state.GetStr("last_response"), "REFUND")
+})
+// Default edge (nil predicate): taken when no conditional edge matches
+g.AddEdge("classify", "support", nil)
+
+resp, _ := g.Run(ctx, session, "I want a refund")
+```
+
+State is shared across nodes via `*GraphState`. Each node's response is stored in `state.GetStr("last_response")` for downstream predicates.
+
+---
+
+## Run Context (Dependency Injection)
+
+Pass request-scoped data (user ID, tenant, feature flags) to tools without threading extra parameters through every function:
+
+```go
+rctx := agnogo.NewRunContext()
+rctx.Set("user_id", "u-123")
+rctx.Set("tenant", "acme")
+
+ctx := rctx.WithContext(context.Background())
+resp, _ := agent.Run(ctx, session, "Check my balance")
+
+// Inside any tool function:
+func checkBalance(ctx context.Context, args map[string]string) (string, error) {
+    rc := agnogo.RunCtx(ctx)
+    userID := rc.GetStr("user_id") // "u-123"
+    // ... look up balance for userID
+}
+```
+
+---
+
+## Event Bus
+
+Decouple observability from agent logic with a pub/sub event system:
+
+```go
+bus := agnogo.NewEventBus()
+
+bus.On(agnogo.EventRunStart, func(e agnogo.Event) {
+    log.Println("run started:", e.Data["run_id"])
+})
+bus.On(agnogo.EventModelDone, func(e agnogo.Event) {
+    log.Println("model done:", e.Data["duration"])
+})
+bus.On(agnogo.EventToolCall, func(e agnogo.Event) {
+    log.Println("tool called:", e.Data["tool"])
+})
+
+agent := agnogo.Agent("You are helpful.", agnogo.WithEvents(bus))
+```
+
+Built-in event types: `EventRunStart`, `EventRunEnd`, `EventModelCall`, `EventModelDone`, `EventToolCall`, `EventToolDone`.
+
+---
+
+## Middleware Hooks
+
+Wrap every `Run` call with reusable middleware. Hooks follow the standard middleware pattern -- call `next` to continue:
+
+```go
+timer := func(ctx context.Context, a *agnogo.Core, s *agnogo.Session, msg string, next agnogo.NextFunc) (*agnogo.Response, error) {
+    start := time.Now()
+    resp, err := next(ctx, a, s, msg)
+    log.Printf("run took %s", time.Since(start))
+    return resp, err
+}
+
+logger := func(ctx context.Context, a *agnogo.Core, s *agnogo.Session, msg string, next agnogo.NextFunc) (*agnogo.Response, error) {
+    log.Printf("input: %s", msg)
+    resp, err := next(ctx, a, s, msg)
+    if resp != nil { log.Printf("output: %s", resp.Text) }
+    return resp, err
+}
+
+agent := agnogo.Agent("You are helpful.", agnogo.WithHooks(timer, logger))
+```
+
+Hooks compose in order: the first hook wraps the second, which wraps the core run loop.
+
+---
+
+## Session Summarization
+
+Automatically compress old messages into a summary to stay within the context window:
+
+```go
+agent := agnogo.Agent("You are helpful.", agnogo.WithSummarize(30))
+```
+
+When a session exceeds 30 messages, the oldest messages are replaced with a single summary message generated by the LLM. The summary preserves key facts and conversation context while reducing token usage.
 
 ---
 
@@ -324,25 +491,48 @@ agent.Tool("get_weather", "Get weather for a city", agnogo.Params{
 })
 ```
 
-### Built-in Tools
+### Built-in Tools (35)
 ```go
 import "github.com/saeedalam/agnogo/tools"
 
-agent.AddTools(tools.Calculator()...)                          // math operations
+// --- Core (16: configurable limits, expression parser, HTML stripping, pagination) ---
+agent.AddTools(tools.Calculator()...)                          // expression parser calculator
 agent.AddTools(tools.Shell("echo", "ls", "cat")...)           // shell (with allowlist)
 agent.AddTools(tools.HTTP()...)                                // HTTP requests
-agent.AddTools(tools.File("/safe/dir")...)                     // file read/write/list
-agent.AddTools(tools.DuckDuckGo()...)                          // web search
+agent.AddTools(tools.File("/safe/dir")...)                     // file read/write/list (pagination)
+agent.AddTools(tools.DuckDuckGo()...)                          // web search (configurable limits)
 agent.AddTools(tools.Wikipedia()...)                           // Wikipedia lookup
-agent.AddTools(tools.WebBrowser()...)                          // fetch & read URLs
-agent.AddTools(tools.Email("smtp.gmail.com", 465, user, pass, from)...) // SMTP email
+agent.AddTools(tools.WebBrowser()...)                          // fetch & read URLs (HTML stripping)
+agent.AddTools(tools.Email("smtp.gmail.com", 465, u, p, f)...)// SMTP email
 agent.AddTools(tools.SQL(db, true)...)                         // SQL queries (read-only)
 agent.AddTools(tools.JSON()...)                                // JSON parse/format
-agent.AddTools(tools.CSV()...)                                 // CSV → JSON
+agent.AddTools(tools.CSV()...)                                 // CSV -> JSON
 agent.AddTools(tools.Slack("xoxb-token")...)                   // Slack messaging
 agent.AddTools(tools.GitHub("ghp_token")...)                   // GitHub API
-agent.AddTools(tools.Docker()...)                              // Docker management
+agent.AddTools(tools.Docker()...)                               // Docker management
 agent.AddTools(tools.GoogleSearch("api-key", "cx-id")...)      // Google search
+agent.AddTools(tools.Env()...)                                 // read environment variables
+
+// --- Utility (19) ---
+agent.AddTools(tools.Regex()...)          // regex match/replace
+agent.AddTools(tools.Base64()...)         // base64 encode/decode
+agent.AddTools(tools.Hash()...)           // SHA-256, MD5, etc.
+agent.AddTools(tools.UUID()...)           // generate UUIDs
+agent.AddTools(tools.TimeTool()...)       // current time, parse, format
+agent.AddTools(tools.TemplateTool()...)   // Go text/template rendering
+agent.AddTools(tools.YAML()...)           // YAML parse/format
+agent.AddTools(tools.XML()...)            // XML parse/format
+agent.AddTools(tools.Diff()...)           // text diff
+agent.AddTools(tools.Archive()...)        // tar/zip create/extract
+agent.AddTools(tools.Crypto()...)         // encrypt/decrypt (AES)
+agent.AddTools(tools.DNS()...)            // DNS lookup
+agent.AddTools(tools.TCP()...)            // TCP connect/send
+agent.AddTools(tools.Markdown()...)       // markdown to HTML
+agent.AddTools(tools.PDFTool()...)        // PDF text extraction
+agent.AddTools(tools.ImageTool()...)      // image metadata/resize
+agent.AddTools(tools.CronTool()...)       // cron expression parser
+agent.AddTools(tools.Semver()...)         // semantic version compare
+agent.AddTools(tools.MetricsTool()...)    // Prometheus-style metrics
 ```
 
 ### Tool with Human Approval
@@ -402,8 +592,8 @@ pinecone.New("https://xxx.pinecone.io", "api-key", embedFn)
 ### Auto-extract Facts (Pattern-based, Free)
 ```go
 agent := agnogo.New(agnogo.Config{AutoMemory: true})
-// "My name is Erik" → session.GetMemory("name") == "Erik"
-// "erik@example.com" → session.GetMemory("email") == "erik@example.com"
+// "My name is Erik" -> session.GetMemory("name") == "Erik"
+// "erik@example.com" -> session.GetMemory("email") == "erik@example.com"
 ```
 
 ### LLM-based Extraction (More Accurate, Costs Tokens)
@@ -499,7 +689,7 @@ team.Agent("support", supportAgent)
 team.Agent("complaint", complaintAgent)
 
 resp, _ := team.Run(ctx, session, "I want to book a haircut")
-// → automatically routed to "booking" agent
+// -> automatically routed to "booking" agent
 ```
 
 ### Custom Routing
@@ -695,14 +885,14 @@ agent := agnogo.New(agnogo.Config{
 agent.CLI()
 // Interactive terminal:
 // > What's 2+2?
-// 🤖 The answer is 4.
+// The answer is 4.
 //
 // > memory
 //   name: Erik
 //
 // > tools
-//   🔧 calculator — Perform math
-//   🔧 web_search — Search the web
+//   calculator -- Perform math
+//   web_search -- Search the web
 //
 // > exit
 // Goodbye!

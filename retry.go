@@ -2,6 +2,7 @@ package agnogo
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"math"
 	"time"
@@ -33,14 +34,27 @@ func retryModelCall(ctx context.Context, cfg RetryConfig, fn func() (*ModelRespo
 
 	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
-			delay := cfg.InitialDelay
-			if cfg.ExponentialBackoff {
-				delay = time.Duration(float64(cfg.InitialDelay) * math.Pow(2, float64(attempt-1)))
+			// If the error is a ProviderError and not retryable, stop immediately.
+			if !IsRetryable(lastErr) {
+				var pe *ProviderError
+				if errors.As(lastErr, &pe) {
+					slog.Debug("agnogo: not retrying non-retryable error", "status", pe.StatusCode)
+					return nil, lastErr
+				}
 			}
-			if delay > cfg.MaxDelay {
-				delay = cfg.MaxDelay
+
+			// Use Retry-After if available, otherwise exponential backoff.
+			delay := RetryAfter(lastErr)
+			if delay == 0 {
+				delay = cfg.InitialDelay
+				if cfg.ExponentialBackoff {
+					delay = time.Duration(float64(cfg.InitialDelay) * math.Pow(2, float64(attempt-1)))
+				}
+				if delay > cfg.MaxDelay {
+					delay = cfg.MaxDelay
+				}
 			}
-			slog.Debug("agnogo: retrying model call", "attempt", attempt+1, "delay", delay)
+			slog.Info("agnogo: retrying", "attempt", attempt+1, "of", cfg.MaxRetries+1, "in", delay.Round(time.Millisecond))
 
 			select {
 			case <-ctx.Done():
@@ -54,7 +68,11 @@ func retryModelCall(ctx context.Context, cfg RetryConfig, fn func() (*ModelRespo
 			return resp, nil
 		}
 		lastErr = err
-		slog.Warn("agnogo: model call failed", "attempt", attempt+1, "error", err)
+		msg := err.Error()
+		if len(msg) > 120 {
+			msg = msg[:120] + "..."
+		}
+		slog.Warn("agnogo: attempt failed", "attempt", attempt+1, "error", msg)
 	}
 
 	return nil, lastErr

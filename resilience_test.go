@@ -257,3 +257,56 @@ func TestTimeoutProviderExpires(t *testing.T) {
 		t.Fatal("expected timeout error")
 	}
 }
+
+// --- RateLimiter Close ---
+
+func TestRateLimiterClose(t *testing.T) {
+	inner := &mockModel{responses: []ModelResponse{{Text: "ok"}}}
+	rl := RateLimiter(inner, 60)
+
+	// Use it once to verify it works.
+	resp, err := rl.ChatCompletion(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != "ok" {
+		t.Errorf("text = %q, want 'ok'", resp.Text)
+	}
+
+	// Close should not panic or block.
+	c, ok := rl.(Closeable)
+	if !ok {
+		t.Fatal("RateLimiter should implement Closeable")
+	}
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
+}
+
+func TestCloseProviderNested(t *testing.T) {
+	inner1 := &mockModel{responses: []ModelResponse{{Text: "a"}}}
+	inner2 := &mockModel{responses: []ModelResponse{{Text: "b"}}}
+	rl := RateLimiter(inner1, 60)
+	fb := Fallback(rl, inner2)
+
+	if err := CloseProvider(fb); err != nil {
+		t.Fatalf("CloseProvider error: %v", err)
+	}
+
+	// Verify the rate limiter's done channel is closed (goroutine stopped).
+	rlp := rl.(*rateLimiterProvider)
+	select {
+	case <-rlp.done:
+		// OK, channel is closed.
+	default:
+		t.Error("expected done channel to be closed after CloseProvider")
+	}
+}
+
+func TestCloseProviderNoop(t *testing.T) {
+	inner := &mockModel{responses: []ModelResponse{{Text: "ok"}}}
+	// CloseProvider on a plain mockModel should do nothing and return nil.
+	if err := CloseProvider(inner); err != nil {
+		t.Fatalf("CloseProvider on plain provider returned error: %v", err)
+	}
+}

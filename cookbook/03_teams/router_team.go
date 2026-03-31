@@ -1,11 +1,12 @@
 //go:build ignore
 
-// Team routing — messages route to booking or support agent. Try:
-//   "I want to book a haircut"
-//   "What services do you offer?"
-//   "Can I schedule an appointment for tomorrow?"
+// Team routing -- messages route to booking or support agent. Try:
 //
-//	source .env && go run ./cookbook/03_teams/router_team.go
+//	"I want to book a haircut"
+//	"What services do you offer?"
+//	"Can I schedule an appointment for tomorrow?"
+//
+//	OPENAI_API_KEY=sk-... go run ./cookbook/03_teams/router_team.go
 package main
 
 import (
@@ -15,29 +16,28 @@ import (
 	"strings"
 
 	"github.com/saeedalam/agnogo"
-	"github.com/saeedalam/agnogo/providers/openai"
 )
 
+type CheckAvailInput struct {
+	Date string `json:"date" desc:"Date (YYYY-MM-DD)" required:"true"`
+}
+
 func main() {
-	model := openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4.1-mini")
-	debug := agnogo.DefaultDebug()
+	checkAvail := agnogo.TypedTool(
+		"check_availability", "Check available time slots",
+		func(ctx context.Context, in CheckAvailInput) (string, error) {
+			return fmt.Sprintf("Available slots for %s: 10:00, 11:30, 14:00, 15:30", in.Date), nil
+		},
+	)
 
-	bookingAgent := agnogo.New(agnogo.Config{
-		Model:        model,
-		Instructions: "You are a booking assistant for a hair salon. Help customers schedule appointments.",
-		Debug:        &debug,
-	})
-	bookingAgent.Tool("check_availability", "Check available time slots", agnogo.Params{
-		"date": {Type: "string", Desc: "Date (YYYY-MM-DD)", Required: true},
-	}, func(ctx context.Context, args map[string]string) (string, error) {
-		return fmt.Sprintf(`Available slots for %s: 10:00, 11:30, 14:00, 15:30`, args["date"]), nil
-	})
+	bookingAgent := agnogo.Agent(
+		"You are a booking assistant for a hair salon. Help customers schedule appointments.",
+		checkAvail,
+	)
 
-	supportAgent := agnogo.New(agnogo.Config{
-		Model:        model,
-		Instructions: "You are a customer support agent for a hair salon. Answer questions about services, prices, and policies.",
-		Debug:        &debug,
-	})
+	supportAgent := agnogo.Agent(
+		"You are a customer support agent for a hair salon. Answer questions about services, prices, and policies.",
+	)
 
 	team := agnogo.NewTeam(agnogo.TeamConfig{
 		RouterFunc: func(ctx context.Context, msg string, agents []string) (string, error) {
@@ -51,8 +51,7 @@ func main() {
 	team.Agent("booking", bookingAgent)
 	team.Agent("support", supportAgent)
 
-	// Interactive loop
-	fmt.Println("🏠 Salon Team Agent — type your message (exit to quit)")
+	fmt.Println("Salon Team Agent -- type your message (exit to quit)")
 	fmt.Println("  Routes to: booking (book/appointment) or support (everything else)")
 	fmt.Println()
 

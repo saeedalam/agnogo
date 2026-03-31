@@ -11,30 +11,12 @@ import (
 	"os"
 
 	"github.com/saeedalam/agnogo"
-	"github.com/saeedalam/agnogo/providers/openai"
 )
 
 func main() {
-	model := openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4.1-mini")
-	debug := agnogo.DefaultDebug()
-
-	weather := agnogo.New(agnogo.Config{
-		Model:        model,
-		Instructions: "You are a weather reporter. Give a brief weather forecast for Stockholm today. 2 sentences max.",
-		Debug:        &debug,
-	})
-
-	news := agnogo.New(agnogo.Config{
-		Model:        model,
-		Instructions: "You are a news anchor. Give 3 brief fictional headline items for today. Keep it short.",
-		Debug:        &debug,
-	})
-
-	calendar := agnogo.New(agnogo.Config{
-		Model:        model,
-		Instructions: "You are a calendar assistant. Create a sample daily schedule for a busy professional. List 5 items for today.",
-		Debug:        &debug,
-	})
+	weather := agnogo.Agent("You are a weather reporter. Give a brief weather forecast for Stockholm today. 2 sentences max.")
+	news := agnogo.Agent("You are a news anchor. Give 3 brief fictional headline items for today. Keep it short.")
+	calendar := agnogo.Agent("You are a calendar assistant. Create a sample daily schedule for a busy professional. List 5 items for today.")
 
 	wf := agnogo.Parallel(
 		agnogo.Step("weather", weather),

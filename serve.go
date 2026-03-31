@@ -11,11 +11,13 @@ import (
 type ServeOption func(*serverConfig)
 
 type serverConfig struct {
-	corsOrigins  []string
-	authToken    string
-	middleware   []func(http.Handler) http.Handler
-	readTimeout  time.Duration
-	writeTimeout time.Duration
+	corsOrigins    []string
+	authToken      string
+	middleware     []func(http.Handler) http.Handler
+	readTimeout    time.Duration
+	writeTimeout   time.Duration
+	maxConcurrent  int
+	maxBodySize    int64
 }
 
 // WithCORS enables CORS for the given origins (e.g. "*", "https://example.com").
@@ -44,6 +46,22 @@ func WithTimeouts(read, write time.Duration) ServeOption {
 	return func(c *serverConfig) {
 		c.readTimeout = read
 		c.writeTimeout = write
+	}
+}
+
+// WithMaxConcurrent limits the number of concurrent requests the server will
+// handle. When at capacity, new requests receive 503 Service Unavailable.
+func WithMaxConcurrent(n int) ServeOption {
+	return func(c *serverConfig) {
+		c.maxConcurrent = n
+	}
+}
+
+// WithMaxBodySize limits the maximum request body size in bytes.
+// If not set, the default is 1 MB (1<<20).
+func WithMaxBodySize(bytes int64) ServeOption {
+	return func(c *serverConfig) {
+		c.maxBodySize = bytes
 	}
 }
 
@@ -83,13 +101,24 @@ func (a *Core) Handler(opts ...ServeOption) http.Handler {
 		o(cfg)
 	}
 
+	// Default max body size: 1 MB.
+	bodyLimit := cfg.maxBodySize
+	if bodyLimit == 0 {
+		bodyLimit = 1 << 20
+	}
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /ask", a.handleAsk)
-	mux.HandleFunc("POST /stream", a.handleStream)
+	mux.HandleFunc("POST /ask", a.handleAskWithLimit(bodyLimit))
+	mux.HandleFunc("POST /stream", a.handleStreamWithLimit(bodyLimit))
 	mux.HandleFunc("GET /health", a.handleHealth)
 	mux.HandleFunc("GET /tools", a.handleTools)
 
 	var handler http.Handler = mux
+
+	// Apply concurrency limiter (semaphore) middleware.
+	if cfg.maxConcurrent > 0 {
+		handler = concurrencyMiddleware(cfg.maxConcurrent, handler)
+	}
 
 	// Apply CORS middleware.
 	if len(cfg.corsOrigins) > 0 {
@@ -130,6 +159,37 @@ func (a *Core) Serve(addr string, opts ...ServeOption) error {
 
 	slog.Info("agnogo: serving", "addr", addr, "tools", a.tools.Count())
 	return srv.ListenAndServe()
+}
+
+// handleAskWithLimit returns an /ask handler that enforces a body size limit.
+func (a *Core) handleAskWithLimit(maxBody int64) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+		a.handleAsk(w, r)
+	}
+}
+
+// handleStreamWithLimit returns a /stream handler that enforces a body size limit.
+func (a *Core) handleStreamWithLimit(maxBody int64) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+		a.handleStream(w, r)
+	}
+}
+
+// concurrencyMiddleware limits concurrent requests using a buffered channel as semaphore.
+// When at capacity, new requests receive 503 Service Unavailable.
+func concurrencyMiddleware(n int, next http.Handler) http.Handler {
+	sem := make(chan struct{}, n)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case sem <- struct{}{}:
+			defer func() { <-sem }()
+			next.ServeHTTP(w, r)
+		default:
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "server at capacity"})
+		}
+	})
 }
 
 // handleAsk handles POST /ask.
@@ -256,31 +316,31 @@ func writeSSE(w http.ResponseWriter, rc *http.ResponseController, v any) {
 
 // corsMiddleware returns a handler that sets CORS headers and handles preflight.
 func corsMiddleware(origins []string, next http.Handler) http.Handler {
-	allowOrigin := origins[0] // simplified: use first origin for Allow-Origin header
-	if len(origins) == 1 && origins[0] == "*" {
-		allowOrigin = "*"
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// For multiple origins, check if request origin is allowed.
-		if len(origins) > 1 {
+		origin := ""
+		if len(origins) == 1 && origins[0] == "*" {
+			origin = "*"
+		} else {
 			reqOrigin := r.Header.Get("Origin")
 			for _, o := range origins {
-				if o == reqOrigin || o == "*" {
-					allowOrigin = reqOrigin
+				if o == reqOrigin {
+					origin = reqOrigin
 					break
 				}
 			}
+			w.Header().Set("Vary", "Origin")
 		}
 
-		w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		}
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-
 		next.ServeHTTP(w, r)
 	})
 }

@@ -5,15 +5,57 @@ import (
 	"os"
 )
 
-// Option is a functional option for the Core convenience constructor.
-type Option func(*smartConfig)
+// Option configures the Agent() constructor. Tools, flags, and With*() functions
+// all implement this interface, so they can be passed directly:
+//
+//	agent := agnogo.Agent("You are helpful.", weather, getTime, agnogo.Debug)
+//	agent := agnogo.Agent("You are helpful.", agnogo.WithOpenAI(), agnogo.WithStorage(db))
+type Option interface {
+	applyOption(*smartConfig)
+}
+
+// optionFunc adapts a function into an Option.
+type optionFunc func(*smartConfig)
+
+func (f optionFunc) applyOption(sc *smartConfig) { f(sc) }
+
+
+// ── Predefined flag options (no parentheses needed) ──────────
+
+// Debug enables debug output.
+//
+//	agent := agnogo.Agent("...", agnogo.Debug)
+var Debug Option = optionFunc(func(sc *smartConfig) {
+	dbg := DefaultDebug()
+	sc.Debug = &dbg
+})
+
+// Memory enables automatic pattern-based memory extraction.
+//
+//	agent := agnogo.Agent("...", agnogo.Memory)
+var Memory Option = optionFunc(func(sc *smartConfig) {
+	sc.AutoMemory = true
+})
+
+// Reasoning enables chain-of-thought reasoning before responding.
+var Reasoning Option = optionFunc(func(sc *smartConfig) {
+	sc.Reasoning = &ReasoningConfig{}
+})
+
+// UnsafeMode disables all safe defaults (retry, history trimming, hallucination guard).
+var UnsafeMode Option = optionFunc(func(sc *smartConfig) {
+	sc.unsafe = true
+})
 
 // smartConfig is an internal configuration struct that extends Config
-// with fields used only by the Agent() constructor (e.g., tools, unsafe flag).
+// with fields used only by the Agent() constructor.
 type smartConfig struct {
 	Config
-	tools  []ToolDef
-	unsafe bool
+	tools              []ToolDef
+	hooks              []Hook
+	summarizeThreshold  int
+	summarizeKeepRecent int
+	unsafe             bool
 }
 
 // registeredProvider holds the information needed to auto-detect a provider
@@ -27,10 +69,6 @@ type registeredProvider struct {
 var providerRegistry []registeredProvider
 
 // RegisterProvider registers a provider factory for auto-detection.
-// This is called from the autodetect package's init() functions.
-// envVar is the environment variable to check (e.g. "OPENAI_API_KEY"),
-// defaultModel is the model to use when auto-detected, and factory
-// creates a ModelProvider given the API key.
 func RegisterProvider(envVar, defaultModel string, factory func(apiKey string) ModelProvider) {
 	providerRegistry = append(providerRegistry, registeredProvider{
 		envVar:       envVar,
@@ -48,7 +86,7 @@ func DetectProvider() (ModelProvider, error) {
 		}
 	}
 	if len(providerRegistry) == 0 {
-		return nil, fmt.Errorf("agnogo: no providers registered; import _ \"github.com/saeedalam/agnogo/autodetect\"")
+		return nil, fmt.Errorf("agnogo: no providers registered")
 	}
 	var tried []string
 	for _, rp := range providerRegistry {
@@ -57,18 +95,12 @@ func DetectProvider() (ModelProvider, error) {
 	return nil, fmt.Errorf("agnogo: no API key found; set one of: %v", tried)
 }
 
-// Agent creates an agent with smart defaults. It auto-detects the model
-// provider from environment variables if none is provided via WithModel.
+// Agent creates an agent with smart defaults. Auto-detects provider from env vars.
+// Tools, flags, and options can all be passed directly:
 //
-// Safe defaults are ON by default:
-//   - Retry with DefaultRetryConfig()
-//   - History trimming with DefaultHistoryConfig()
-//   - HallucinationGuard enabled
-//
-// Use Unsafe() to disable all safe defaults.
-//
-//	a := agnogo.Agent("You are a helpful assistant.")
-//	a := agnogo.Agent("You are a coder.", agnogo.WithTools(myTools...), agnogo.WithDebug())
+//	a := agnogo.Agent("You are helpful.")
+//	a := agnogo.Agent("You are helpful.", weather, getTime, agnogo.Debug)
+//	a := agnogo.Agent("You are helpful.", agnogo.WithOpenAI("gpt-4o"), agnogo.WithStorage(db))
 func Agent(instructions string, opts ...Option) *Core {
 	sc := smartConfig{
 		Config: Config{
@@ -77,19 +109,19 @@ func Agent(instructions string, opts ...Option) *Core {
 	}
 
 	for _, opt := range opts {
-		opt(&sc)
+		opt.applyOption(&sc)
 	}
 
 	// Auto-detect provider if none was set.
 	if sc.Model == nil {
-		p, err := DetectProvider()
+		p, err := autoProvider()
 		if err != nil {
 			panic(err)
 		}
 		sc.Model = p
 	}
 
-	// Apply safe defaults unless Unsafe() was used.
+	// Apply safe defaults unless UnsafeMode was used.
 	if !sc.unsafe {
 		if sc.Retry == nil {
 			rc := DefaultRetryConfig()
@@ -103,12 +135,18 @@ func Agent(instructions string, opts ...Option) *Core {
 
 	a := New(sc.Config)
 
-	// Add tools if any were provided.
+	if len(sc.hooks) > 0 {
+		a.hooks = sc.hooks
+	}
+	if sc.summarizeThreshold > 0 {
+		a.summarizeThreshold = sc.summarizeThreshold
+		a.summarizeKeepRecent = sc.summarizeKeepRecent
+	}
+
 	if len(sc.tools) > 0 {
 		a.AddTools(sc.tools...)
 	}
 
-	// Enable hallucination guard unless unsafe mode.
 	if !sc.unsafe {
 		a.HallucinationGuard()
 	}
@@ -116,73 +154,222 @@ func Agent(instructions string, opts ...Option) *Core {
 	return a
 }
 
-// WithModel sets a specific model provider, bypassing auto-detection.
-func WithModel(p ModelProvider) Option {
-	return func(sc *smartConfig) {
-		sc.Model = p
-	}
+// ── Grouping helpers ─────────────────────────────────────────
+
+// Tools groups multiple ToolDefs into a single Option.
+// Use when you have many tools:
+//
+//	agent := agnogo.Agent("You are helpful.", agnogo.Tools(t1, t2, t3, t4, t5), agnogo.Debug)
+func Tools(tools ...ToolDef) Option {
+	return optionFunc(func(sc *smartConfig) {
+		sc.tools = append(sc.tools, tools...)
+	})
 }
 
-// WithTools adds tool definitions to the agent.
+// ── With*() options (for things that need parameters) ────────
+
+// WithModel sets a specific model provider, bypassing auto-detection.
+func WithModel(p ModelProvider) Option {
+	return optionFunc(func(sc *smartConfig) {
+		sc.Model = p
+	})
+}
+
+// WithTools adds tool definitions. Also works by passing tools directly to Agent().
 func WithTools(tools ...ToolDef) Option {
-	return func(sc *smartConfig) {
+	return optionFunc(func(sc *smartConfig) {
 		sc.tools = append(sc.tools, tools...)
-	}
+	})
 }
 
 // WithStorage sets a storage backend for session persistence.
 func WithStorage(s Storage) Option {
-	return func(sc *smartConfig) {
+	return optionFunc(func(sc *smartConfig) {
 		sc.Storage = s
-	}
+	})
 }
 
 // WithKnowledge sets the knowledge base for RAG-style retrieval.
 func WithKnowledge(k Knowledge) Option {
-	return func(sc *smartConfig) {
+	return optionFunc(func(sc *smartConfig) {
 		sc.Knowledge = k
-	}
-}
-
-// WithMemory enables automatic pattern-based memory extraction.
-func WithMemory() Option {
-	return func(sc *smartConfig) {
-		sc.AutoMemory = true
-	}
-}
-
-// WithDebug enables debug output at the default level.
-func WithDebug() Option {
-	return func(sc *smartConfig) {
-		dbg := DefaultDebug()
-		sc.Debug = &dbg
-	}
+	})
 }
 
 // WithMaxLoops sets the maximum number of tool-calling loops per Run.
 func WithMaxLoops(n int) Option {
-	return func(sc *smartConfig) {
+	return optionFunc(func(sc *smartConfig) {
 		sc.MaxLoops = n
-	}
-}
-
-// WithReasoning enables chain-of-thought reasoning before the agent responds.
-func WithReasoning() Option {
-	return func(sc *smartConfig) {
-		sc.Reasoning = &ReasoningConfig{}
-	}
+	})
 }
 
 // WithTrace sets observability trace hooks.
 func WithTrace(t *Trace) Option {
-	return func(sc *smartConfig) {
+	return optionFunc(func(sc *smartConfig) {
 		sc.Trace = t
-	}
+	})
 }
 
-// Unsafe disables all safe defaults (retry, history trimming, hallucination guard).
-func Unsafe() Option {
-	return func(sc *smartConfig) {
-		sc.unsafe = true
-	}
+// Deprecated: use Debug variable instead.
+func WithDebug() Option { return Debug }
+
+// Deprecated: use Memory variable instead.
+func WithMemory() Option { return Memory }
+
+// Deprecated: use UnsafeMode variable instead.
+func Unsafe() Option { return UnsafeMode }
+
+// Deprecated: use Reasoning variable instead.
+func WithReasoning() Option { return Reasoning }
+
+// ── Provider-specific options ───────────────────────────────
+
+// WithOpenAI selects OpenAI. Default model: "gpt-4.1-mini".
+func WithOpenAI(model ...string) Option {
+	return optionFunc(func(sc *smartConfig) {
+		m := "gpt-4.1-mini"
+		if len(model) > 0 {
+			m = model[0]
+		}
+		key := os.Getenv("OPENAI_API_KEY")
+		if key == "" {
+			panic("agnogo: OPENAI_API_KEY not set")
+		}
+		sc.Model = newOpenAICompat(key, m, "https://api.openai.com/v1")
+	})
+}
+
+// WithAnthropic selects Anthropic Claude. Default model: "claude-sonnet-4-5-20250514".
+func WithAnthropic(model ...string) Option {
+	return optionFunc(func(sc *smartConfig) {
+		m := "claude-sonnet-4-5-20250514"
+		if len(model) > 0 {
+			m = model[0]
+		}
+		key := os.Getenv("ANTHROPIC_API_KEY")
+		if key == "" {
+			panic("agnogo: ANTHROPIC_API_KEY not set")
+		}
+		sc.Model = newAnthropicInline(key, m, "https://api.anthropic.com/v1/messages")
+	})
+}
+
+// WithGemini selects Google Gemini. Default model: "gemini-2.0-flash".
+func WithGemini(model ...string) Option {
+	return optionFunc(func(sc *smartConfig) {
+		m := "gemini-2.0-flash"
+		if len(model) > 0 {
+			m = model[0]
+		}
+		key := os.Getenv("GEMINI_API_KEY")
+		if key == "" {
+			panic("agnogo: GEMINI_API_KEY not set")
+		}
+		sc.Model = newGeminiInline(key, m, "https://generativelanguage.googleapis.com/v1beta")
+	})
+}
+
+// WithGroq selects Groq. Default model: "llama-3.3-70b-versatile".
+func WithGroq(model ...string) Option {
+	return optionFunc(func(sc *smartConfig) {
+		m := "llama-3.3-70b-versatile"
+		if len(model) > 0 {
+			m = model[0]
+		}
+		key := os.Getenv("GROQ_API_KEY")
+		if key == "" {
+			panic("agnogo: GROQ_API_KEY not set")
+		}
+		sc.Model = newOpenAICompat(key, m, "https://api.groq.com/openai/v1")
+	})
+}
+
+// WithDeepSeek selects DeepSeek. Default model: "deepseek-chat".
+func WithDeepSeek(model ...string) Option {
+	return optionFunc(func(sc *smartConfig) {
+		m := "deepseek-chat"
+		if len(model) > 0 {
+			m = model[0]
+		}
+		key := os.Getenv("DEEPSEEK_API_KEY")
+		if key == "" {
+			panic("agnogo: DEEPSEEK_API_KEY not set")
+		}
+		sc.Model = newOpenAICompat(key, m, "https://api.deepseek.com/v1")
+	})
+}
+
+// WithMistral selects Mistral. Default model: "mistral-large-latest".
+func WithMistral(model ...string) Option {
+	return optionFunc(func(sc *smartConfig) {
+		m := "mistral-large-latest"
+		if len(model) > 0 {
+			m = model[0]
+		}
+		key := os.Getenv("MISTRAL_API_KEY")
+		if key == "" {
+			panic("agnogo: MISTRAL_API_KEY not set")
+		}
+		sc.Model = newOpenAICompat(key, m, "https://api.mistral.ai/v1")
+	})
+}
+
+// WithTogether selects Together AI.
+func WithTogether(model ...string) Option {
+	return optionFunc(func(sc *smartConfig) {
+		m := "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"
+		if len(model) > 0 {
+			m = model[0]
+		}
+		key := os.Getenv("TOGETHER_API_KEY")
+		if key == "" {
+			panic("agnogo: TOGETHER_API_KEY not set")
+		}
+		sc.Model = newOpenAICompat(key, m, "https://api.together.xyz/v1")
+	})
+}
+
+// WithPerplexity selects Perplexity. Default model: "sonar".
+func WithPerplexity(model ...string) Option {
+	return optionFunc(func(sc *smartConfig) {
+		m := "sonar"
+		if len(model) > 0 {
+			m = model[0]
+		}
+		key := os.Getenv("PERPLEXITY_API_KEY")
+		if key == "" {
+			panic("agnogo: PERPLEXITY_API_KEY not set")
+		}
+		sc.Model = newOpenAICompat(key, m, "https://api.perplexity.ai")
+	})
+}
+
+// WithGrok selects Grok (xAI). Default model: "grok-3-mini-fast".
+func WithGrok(model ...string) Option {
+	return optionFunc(func(sc *smartConfig) {
+		m := "grok-3-mini-fast"
+		if len(model) > 0 {
+			m = model[0]
+		}
+		key := os.Getenv("GROK_API_KEY")
+		if key == "" {
+			panic("agnogo: GROK_API_KEY not set")
+		}
+		sc.Model = newOpenAICompat(key, m, "https://api.x.ai/v1")
+	})
+}
+
+// WithOllama selects a local Ollama instance. Default model: "llama3.1".
+func WithOllama(model ...string) Option {
+	return optionFunc(func(sc *smartConfig) {
+		m := "llama3.1"
+		if len(model) > 0 {
+			m = model[0]
+		}
+		host := os.Getenv("OLLAMA_HOST")
+		if host == "" {
+			host = "http://localhost:11434"
+		}
+		sc.Model = newOllamaInline(m, host)
+	})
 }

@@ -12,24 +12,11 @@ import (
 	"strings"
 
 	"github.com/saeedalam/agnogo"
-	"github.com/saeedalam/agnogo/providers/openai"
 )
 
 func main() {
-	model := openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4.1-mini")
-	debug := agnogo.DefaultDebug()
-
-	urgentAgent := agnogo.New(agnogo.Config{
-		Model:        model,
-		Instructions: "You handle URGENT customer issues. Be empathetic, apologize, and promise immediate resolution. Keep it brief.",
-		Debug:        &debug,
-	})
-
-	normalAgent := agnogo.New(agnogo.Config{
-		Model:        model,
-		Instructions: "You handle standard customer inquiries. Be helpful and professional. Keep it brief.",
-		Debug:        &debug,
-	})
+	urgentAgent := agnogo.Agent("You handle URGENT customer issues. Be empathetic, apologize, and promise immediate resolution. Keep it brief.")
+	normalAgent := agnogo.Agent("You handle standard customer inquiries. Be helpful and professional. Keep it brief.")
 
 	wf := agnogo.Condition(
 		func(ctx context.Context, input string) bool {

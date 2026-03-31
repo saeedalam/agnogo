@@ -11,23 +11,19 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/saeedalam/agnogo"
-	"github.com/saeedalam/agnogo/providers/openai"
 )
 
 func main() {
-	model := openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4.1-mini")
 	store := agnogo.NewMemoryStorage()
-	debug := agnogo.DefaultDebug()
 
-	agent := agnogo.New(agnogo.Config{
-		Model:        model,
-		Instructions: "You are a helpful assistant. Remember context from earlier in the conversation.",
-		Storage:      store,
-		Debug:        &debug,
-	})
+	agent := agnogo.Agent(
+		"You are a helpful assistant. Remember context from earlier in the conversation.",
+		agnogo.WithStorage(store),
+		agnogo.Memory,
+		agnogo.Debug,
+	)
 
 	ctx := context.Background()
 
@@ -56,4 +52,5 @@ func main() {
 	for _, e := range entries {
 		fmt.Printf("  %s: %s\n", e.Key, e.Content)
 	}
+
 }

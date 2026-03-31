@@ -11,33 +11,17 @@ import (
 	"os"
 
 	"github.com/saeedalam/agnogo"
-	"github.com/saeedalam/agnogo/providers/openai"
 )
 
 func main() {
-	model := openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4.1-mini")
-	debug := agnogo.DefaultDebug()
-
 	// Step 1: Extract key info
-	extractor := agnogo.New(agnogo.Config{
-		Model:        model,
-		Instructions: "Extract the key facts from the user's message. Output a clean bullet list of facts only.",
-		Debug:        &debug,
-	})
+	extractor := agnogo.Agent("Extract the key facts from the user's message. Output a clean bullet list of facts only.")
 
 	// Step 2: Translate to Swedish
-	translator := agnogo.New(agnogo.Config{
-		Model:        model,
-		Instructions: "Translate the following text to Swedish. Keep the same format.",
-		Debug:        &debug,
-	})
+	translator := agnogo.Agent("Translate the following text to Swedish. Keep the same format.")
 
 	// Step 3: Summarize
-	summarizer := agnogo.New(agnogo.Config{
-		Model:        model,
-		Instructions: "Write a one-paragraph summary of the provided information. Be concise.",
-		Debug:        &debug,
-	})
+	summarizer := agnogo.Agent("Write a one-paragraph summary of the provided information. Be concise.")
 
 	wf := agnogo.Sequential(
 		agnogo.Step("extract", extractor),
@@ -57,6 +41,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("\n--- Final output (extracted → translated → summarized) ---")
+	fmt.Println("\n--- Final output (extracted -> translated -> summarized) ---")
 	fmt.Println(resp.Text)
 }

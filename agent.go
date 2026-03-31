@@ -42,8 +42,11 @@ type Core struct {
 	debug        DebugConfig
 	inputGuards  []Guardrail
 	outputGuards []Guardrail
-	maxLoops     int
-	fallbackText string
+	maxLoops            int
+	fallbackText        string
+	hooks               []Hook
+	summarizeThreshold  int
+	summarizeKeepRecent int
 }
 
 // Config configures a new Core.
@@ -177,6 +180,10 @@ type Response struct {
 func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*Response, error) {
 	if session == nil {
 		return nil, fmt.Errorf("agnogo: session is nil")
+	}
+	// Hook chain: if hooks are set, wrap the run
+	if len(a.hooks) > 0 {
+		return a.runWithHooks(ctx, session, userMessage)
 	}
 	runStart := time.Now()
 	runID := generateRunID()
@@ -328,6 +335,11 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 				if a.trace != nil && a.trace.OnSessionSave != nil {
 					a.trace.OnSessionSave(session, saveErr)
 				}
+			}
+
+			// Auto-summarize if configured
+			if a.summarizeThreshold > 0 && len(session.History) > a.summarizeThreshold {
+				_ = SummarizeSession(ctx, a, session, a.summarizeKeepRecent)
 			}
 
 			metrics.ToolCalls = len(toolsCalled)

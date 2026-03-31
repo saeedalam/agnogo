@@ -11,9 +11,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/saeedalam/agnogo"
 )
+
+// sharedOpenAITransport pools connections across OpenAI provider instances.
+var sharedOpenAITransport = &http.Transport{
+	MaxIdleConns:        100,
+	MaxIdleConnsPerHost: 10,
+	IdleConnTimeout:     90 * time.Second,
+}
 
 // Provider implements agnogo.ModelProvider for OpenAI.
 type Provider struct {
@@ -39,7 +47,7 @@ func New(apiKey, model string, cfgs ...agnogo.ModelConfig) *Provider {
 	return &Provider{
 		apiKey: apiKey, model: model,
 		baseURL: "https://api.openai.com/v1",
-		cfg: cfg, client: &http.Client{Timeout: cfg.Timeout},
+		cfg: cfg, client: &http.Client{Timeout: cfg.Timeout, Transport: sharedOpenAITransport},
 	}
 }
 
@@ -65,7 +73,9 @@ func (p *Provider) ChatCompletion(ctx context.Context, messages []agnogo.Message
 				}
 			}
 			msg["tool_calls"] = calls
-			delete(msg, "content")
+			if m.Content == "" {
+				delete(msg, "content")
+			}
 		}
 		oaiMsgs = append(oaiMsgs, msg)
 	}
@@ -80,28 +90,28 @@ func (p *Provider) ChatCompletion(ctx context.Context, messages []agnogo.Message
 
 	bodyJSON, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("marshal: %w", err)
+		return nil, fmt.Errorf("openai: marshal request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/chat/completions", bytes.NewReader(bodyJSON))
 	if err != nil {
-		return nil, fmt.Errorf("new request: %w", err)
+		return nil, fmt.Errorf("openai: create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.apiKey)
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request: %w", err)
+		return nil, fmt.Errorf("openai: HTTP request to %s failed: %w", p.baseURL, err)
 	}
 	defer resp.Body.Close()
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read: %w", err)
+		return nil, fmt.Errorf("openai: read response: %w", err)
 	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("openai %d: %s", resp.StatusCode, truncate(string(data), 300))
+		return nil, agnogo.ParseProviderError("openai", resp.StatusCode, data, resp.Header)
 	}
 
 	var result struct {
@@ -124,10 +134,10 @@ func (p *Provider) ChatCompletion(ctx context.Context, messages []agnogo.Message
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, fmt.Errorf("parse: %w", err)
+		return nil, fmt.Errorf("openai: parse response JSON: %w", err)
 	}
 	if len(result.Choices) == 0 {
-		return nil, fmt.Errorf("empty response")
+		return nil, fmt.Errorf("openai: empty response from %s (model: %s)", p.baseURL, p.model)
 	}
 
 	choice := result.Choices[0].Message
@@ -150,7 +160,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, messages []agnogo.Message
 	return mr, nil
 }
 
-func truncate(s string, n int) string {
-	if len(s) <= n { return s }
-	return s[:n] + "…"
+// ChatCompletionStream implements agnogo.StreamProvider for real token-level streaming.
+func (p *Provider) ChatCompletionStream(ctx context.Context, messages []agnogo.Message, tools []map[string]any) (<-chan agnogo.StreamEvent, error) {
+	return agnogo.OpenAIStreamResponse(ctx, p.apiKey, p.model, p.baseURL, messages, tools, p.cfg)
 }

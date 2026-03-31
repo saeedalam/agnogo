@@ -3,10 +3,13 @@
 //
 // Quick start (auto-detect provider from env vars):
 //
-//	import _ "github.com/saeedalam/agnogo/autodetect"
-//
 //	agent := agnogo.Agent("You are a helpful assistant.")
 //	answer, _ := agent.Ask(ctx, "What's the weather in Stockholm?")
+//
+// Or with an explicit provider:
+//
+//	agent := agnogo.Agent("You are helpful.", agnogo.WithOpenAI())
+//	agent := agnogo.Agent("You are helpful.", agnogo.WithAnthropic("claude-sonnet-4-5-20250514"))
 //
 // Power-user mode (explicit configuration):
 //

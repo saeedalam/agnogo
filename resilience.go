@@ -171,14 +171,20 @@ func (cb *circuitBreakerProvider) ChatCompletion(ctx context.Context, messages [
 
 // rateLimiterProvider wraps a provider with token bucket rate limiting.
 type rateLimiterProvider struct {
-	provider ModelProvider
-	tokens   chan struct{}
+	provider  ModelProvider
+	tokens    chan struct{}
+	ticker    *time.Ticker
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 // RateLimiter wraps a provider with token bucket rate limiting.
 // It allows up to requestsPerMinute requests per minute, using a token bucket
 // that is replenished at a steady rate. Calls block until a token is available
 // or the context is cancelled.
+//
+// The returned provider implements Closeable. Call CloseProvider (or Close
+// directly) when done to stop the background replenishment goroutine.
 func RateLimiter(provider ModelProvider, requestsPerMinute int) ModelProvider {
 	tokens := make(chan struct{}, requestsPerMinute)
 	// Fill the bucket initially.
@@ -189,12 +195,19 @@ func RateLimiter(provider ModelProvider, requestsPerMinute int) ModelProvider {
 	// Replenish tokens at a steady rate.
 	interval := time.Minute / time.Duration(requestsPerMinute)
 	ticker := time.NewTicker(interval)
+	done := make(chan struct{})
 	go func() {
-		for range ticker.C {
+		for {
 			select {
-			case tokens <- struct{}{}:
-			default:
-				// Bucket is full; discard token.
+			case <-ticker.C:
+				select {
+				case tokens <- struct{}{}:
+				default:
+					// Bucket is full; discard token.
+				}
+			case <-done:
+				ticker.Stop()
+				return
 			}
 		}
 	}()
@@ -202,7 +215,15 @@ func RateLimiter(provider ModelProvider, requestsPerMinute int) ModelProvider {
 	return &rateLimiterProvider{
 		provider: provider,
 		tokens:   tokens,
+		ticker:   ticker,
+		done:     done,
 	}
+}
+
+// Close stops the background token replenishment goroutine.
+func (r *rateLimiterProvider) Close() error {
+	r.closeOnce.Do(func() { close(r.done) })
+	return nil
 }
 
 func (r *rateLimiterProvider) ChatCompletion(ctx context.Context, messages []Message, tools []map[string]any) (*ModelResponse, error) {
@@ -234,4 +255,45 @@ func (t *timeoutProvider) ChatCompletion(ctx context.Context, messages []Message
 	ctx, cancel := context.WithTimeout(ctx, t.timeout)
 	defer cancel()
 	return t.provider.ChatCompletion(ctx, messages, tools)
+}
+
+// --- Closeable ---
+
+// Closeable is implemented by providers that hold resources (goroutines, connections).
+type Closeable interface {
+	Close() error
+}
+
+// CloseProvider closes a provider if it implements Closeable.
+// For wrapped providers (Fallback, MultiProvider), it closes all inner providers.
+func CloseProvider(p ModelProvider) error {
+	var firstErr error
+	record := func(err error) {
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	switch v := p.(type) {
+	case *fallbackProvider:
+		record(CloseProvider(v.primary))
+		record(CloseProvider(v.secondary))
+	case *multiProvider:
+		for _, inner := range v.providers {
+			record(CloseProvider(inner))
+		}
+	case *circuitBreakerProvider:
+		record(CloseProvider(v.provider))
+	case *rateLimiterProvider:
+		record(v.Close())
+		record(CloseProvider(v.provider))
+	case *timeoutProvider:
+		record(CloseProvider(v.provider))
+	default:
+		if c, ok := p.(Closeable); ok {
+			record(c.Close())
+		}
+	}
+
+	return firstErr
 }

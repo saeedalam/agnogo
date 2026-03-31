@@ -11,9 +11,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/saeedalam/agnogo"
 )
+
+// sharedAnthropicTransport pools connections across Anthropic provider instances.
+var sharedAnthropicTransport = &http.Transport{
+	MaxIdleConns:        100,
+	MaxIdleConnsPerHost: 10,
+	IdleConnTimeout:     90 * time.Second,
+}
 
 // Provider implements agnogo.ModelProvider for Anthropic Claude.
 type Provider struct {
@@ -34,7 +42,7 @@ func New(apiKey, model string, cfgs ...agnogo.ModelConfig) *Provider {
 	}
 	return &Provider{
 		apiKey: apiKey, model: model, cfg: cfg,
-		client: &http.Client{Timeout: cfg.Timeout},
+		client: &http.Client{Timeout: cfg.Timeout, Transport: sharedAnthropicTransport},
 	}
 }
 
@@ -100,24 +108,30 @@ func (p *Provider) ChatCompletion(ctx context.Context, messages []agnogo.Message
 		body["tools"] = anthropicTools
 	}
 
-	bodyJSON, _ := json.Marshal(body)
-	req, _ := http.NewRequestWithContext(ctx, "POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(bodyJSON))
+	bodyJSON, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: marshal request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(bodyJSON))
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: create request: %w", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", p.apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("anthropic request: %w", err)
+		return nil, fmt.Errorf("anthropic: HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("anthropic read body: %w", err)
+		return nil, fmt.Errorf("anthropic: read response: %w", err)
 	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("anthropic %d: %s", resp.StatusCode, string(data)[:min(len(data), 300)])
+		return nil, agnogo.ParseProviderError("anthropic", resp.StatusCode, data, resp.Header)
 	}
 
 	var result struct {
@@ -134,7 +148,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, messages []agnogo.Message
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, fmt.Errorf("parse: %w", err)
+		return nil, fmt.Errorf("anthropic: parse response JSON: %w", err)
 	}
 
 	mr := &agnogo.ModelResponse{}

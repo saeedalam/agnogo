@@ -12,23 +12,15 @@ import (
 	"strings"
 
 	"github.com/saeedalam/agnogo"
-	"github.com/saeedalam/agnogo/providers/openai"
 )
 
 func main() {
-	model := openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4.1-mini")
-	debug := agnogo.DefaultDebug()
-
-	refiner := agnogo.New(agnogo.Config{
-		Model: model,
-		Instructions: `You are an iterative text refiner. Each time you receive text:
+	refiner := agnogo.Agent(`You are an iterative text refiner. Each time you receive text:
 1. Improve the clarity and conciseness
 2. If you think the text is good enough, start your response with "FINAL:"
 3. If it needs more work, just output the improved version
 
-Focus on making the text shorter while keeping the meaning.`,
-		Debug: &debug,
-	})
+Focus on making the text shorter while keeping the meaning.`)
 
 	wf := agnogo.Loop(refiner, func(resp *agnogo.Response, i int) bool {
 		fmt.Printf("  [Iteration %d] Length: %d chars\n", i+1, len(resp.Text))

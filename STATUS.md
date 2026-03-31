@@ -1,4 +1,4 @@
-# agnogo Status — Comparison with Agno
+# agnogo Status -- Comparison with Agno
 
 > Last updated: 2026-03-31
 
@@ -11,180 +11,200 @@ This document tracks feature parity between the two projects.
 
 | Feature | Agno (Python) | agnogo (Go) | Parity |
 |---------|--------------|-------------|--------|
-| Agent + Run loop | `agent.run()` | `agent.Run()` | ✅ |
-| Async run | `agent.arun()` | goroutines (Go idiom) | ✅ |
-| Continue/resume run | `agent.continue_run()` | `agent.Resume()` | ✅ |
-| Cancel run | `Agent.cancel_run()` | `CancelRun()` | ✅ |
-| Tool registration | `@tool` decorator | `agent.Tool()` | ✅ |
-| Set/clear tools | `set_tools()` | `SetTools()` / `ClearTools()` | ✅ |
-| Bulk tool add | `tools=[t1, t2]` | `agent.AddTools(defs...)` | ✅ |
-| Tool call limit | `tool_call_limit` | duplicate detection (max 2) | ✅ |
-| Tool approval | `@approval` | `ToolWithApproval()` + `Resume()` | ✅ |
-| Input guardrails | `pre_hooks` | `InputGuardrail()` | ✅ |
-| Output guardrails | `post_hooks` | `OutputGuardrail()` | ✅ |
-| Retry with backoff | `retries`, `exponential_backoff` | `RetryConfig` | ✅ |
-| Max loops | `tool_call_limit` | `MaxLoops` | ✅ |
-| Fallback text | custom error message | `FallbackText` | ✅ |
+| Agent + Run loop | `agent.run()` | `agent.Run()` | Done |
+| Async run | `agent.arun()` | goroutines (Go idiom) | Done |
+| Continue/resume run | `agent.continue_run()` | `agent.Resume()` | Done |
+| Cancel run | `Agent.cancel_run()` | `CancelRun()` | Done |
+| Tool registration | `@tool` decorator | `agent.Tool()` | Done |
+| Set/clear tools | `set_tools()` | `SetTools()` / `ClearTools()` | Done |
+| Bulk tool add | `tools=[t1, t2]` | `agent.AddTools(defs...)` | Done |
+| Tool call limit | `tool_call_limit` | duplicate detection (max 2) | Done |
+| Tool approval | `@approval` | `ToolWithApproval()` + `Resume()` | Done |
+| Input guardrails | `pre_hooks` | `InputGuardrail()` | Done |
+| Output guardrails | `post_hooks` | `OutputGuardrail()` | Done |
+| Retry with backoff | `retries`, `exponential_backoff` | `RetryConfig` | Done |
+| Max loops | `tool_call_limit` | `MaxLoops` | Done |
+| Fallback text | custom error message | `FallbackText` | Done |
 
 ## Session & Memory
 
 | Feature | Agno | agnogo | Parity |
 |---------|------|--------|--------|
-| Session CRUD | `get/save/delete_session` | `GetSession/SaveSession/DeleteSession` | ✅ |
-| List sessions | `get_sessions` | `ListSessions` | ✅ |
-| Session state | `session_state` | `session.State` | ✅ |
-| Chat history | `get_chat_history` | `GetChatHistory` | ✅ |
-| History trimming | `num_history_messages` | `HistoryConfig.MaxMessages` | ✅ |
-| User memories | `get_user_memories` | `GetMemories` | ✅ |
-| Auto memory (pattern) | `update_memory_on_run` | `AutoMemory: true` | ✅ |
-| Auto memory (LLM) | `enable_agentic_memory` | `LLMMemory` | ✅ |
-| Session summaries | `enable_session_summaries` | ❌ Not implemented | 🔲 |
-| Past session search | `search_past_sessions` | ❌ Not implemented | 🔲 |
+| Session CRUD | `get/save/delete_session` | `GetSession/SaveSession/DeleteSession` | Done |
+| List sessions | `get_sessions` | `ListSessions` | Done |
+| Session state | `session_state` | `session.State` | Done |
+| Chat history | `get_chat_history` | `GetChatHistory` | Done |
+| History trimming | `num_history_messages` | `HistoryConfig.MaxMessages` | Done |
+| User memories | `get_user_memories` | `GetMemories` | Done |
+| Auto memory (pattern) | `update_memory_on_run` | `AutoMemory: true` | Done |
+| Auto memory (LLM) | `enable_agentic_memory` | `LLMMemory` | Done |
+| Session summaries | `enable_session_summaries` | `WithSummarize(n)` | Done |
+| Past session search | `search_past_sessions` | -- | Todo |
 
 ## Knowledge & RAG
 
 | Feature | Agno | agnogo | Parity |
 |---------|------|--------|--------|
-| Knowledge interface | `Knowledge` protocol | `Knowledge` interface | ✅ |
-| Auto-search for questions | `search_knowledge=True` | Auto-injection via `looksLikeQuestion` | ✅ |
-| Add knowledge | `add_to_knowledge` | `AddKnowledge` | ✅ |
-| Knowledge filters | `knowledge_filters` | ❌ Not implemented | 🔲 |
-| Agentic knowledge filters | `enable_agentic_knowledge_filters` | ❌ Not implemented | 🔲 |
+| Knowledge interface | `Knowledge` protocol | `Knowledge` interface | Done |
+| Auto-search for questions | `search_knowledge=True` | Auto-injection via `looksLikeQuestion` | Done |
+| Add knowledge | `add_to_knowledge` | `AddKnowledge` | Done |
+| Knowledge filters | `knowledge_filters` | -- | Todo |
+| Agentic knowledge filters | `enable_agentic_knowledge_filters` | -- | Todo |
 
 ## Reasoning
 
 | Feature | Agno | agnogo | Parity |
 |---------|------|--------|--------|
-| Reasoning mode | `reasoning=True` | `ReasoningConfig.Enabled` | ✅ |
-| Separate reasoning model | `reasoning_model` | `ReasoningConfig.Model` | ✅ |
-| Min/max steps | `reasoning_min/max_steps` | `MinSteps/MaxSteps` | ✅ |
-| Reasoning agent | `reasoning_agent` | ❌ (uses model directly) | 🔲 |
+| Reasoning mode | `reasoning=True` | `ReasoningConfig.Enabled` | Done |
+| Separate reasoning model | `reasoning_model` | `ReasoningConfig.Model` | Done |
+| Min/max steps | `reasoning_min/max_steps` | `MinSteps/MaxSteps` | Done |
+| Reasoning agent | `reasoning_agent` | -- (uses model directly) | Todo |
 
 ## Teams
 
 | Feature | Agno | agnogo | Parity |
 |---------|------|--------|--------|
-| Team with sub-agents | `Team(members=[])` | `NewTeam().Agent()` | ✅ |
-| LLM-based routing | `mode=TeamMode` | `TeamConfig.Model` | ✅ |
-| Custom routing | callable selector | `TeamConfig.RouterFunc` | ✅ |
-| Fallback agent | implicit first | `TeamConfig.Fallback` | ✅ |
-| Nested teams | `Team` as member | ❌ Not implemented | 🔲 |
-| Shared history | `share_member_interactions` | ❌ Not implemented | 🔲 |
+| Team with sub-agents | `Team(members=[])` | `NewTeam().Agent()` | Done |
+| LLM-based routing | `mode=TeamMode` | `TeamConfig.Model` | Done |
+| Custom routing | callable selector | `TeamConfig.RouterFunc` | Done |
+| Fallback agent | implicit first | `TeamConfig.Fallback` | Done |
+| Nested teams | `Team` as member | -- | Todo |
+| Shared history | `share_member_interactions` | -- | Todo |
 
 ## Workflows
 
 | Feature | Agno | agnogo | Parity |
 |---------|------|--------|--------|
-| Sequential | `Steps([s1, s2])` | `Sequential(step1, step2)` | ✅ |
-| Parallel | `Parallel(steps=[])` | `Parallel(step1, step2)` | ✅ |
-| Loop | `Loop(condition=)` | `Loop(agent, stopFn)` | ✅ |
-| Condition | `Condition(eval, true, false)` | `Condition(eval, true, false)` | ✅ |
-| Router | `Router(selector, routes)` | `Route(selector, routes)` | ✅ |
-| Human confirmation | `requires_confirmation` | via `ToolWithApproval` | ✅ |
-| CEL expressions | `cel.py` | ❌ Not implemented | 🔲 |
-| Step input/output chaining | `StepInput.previous_step_outputs` | output → next input | ✅ |
+| Sequential | `Steps([s1, s2])` | `Sequential(step1, step2)` | Done |
+| Parallel | `Parallel(steps=[])` | `Parallel(step1, step2)` | Done |
+| Loop | `Loop(condition=)` | `Loop(agent, stopFn)` | Done |
+| Condition | `Condition(eval, true, false)` | `Condition(eval, true, false)` | Done |
+| Router | `Router(selector, routes)` | `Route(selector, routes)` | Done |
+| Human confirmation | `requires_confirmation` | via `ToolWithApproval` | Done |
+| CEL expressions | `cel.py` | -- | Todo |
+| Step input/output chaining | `StepInput.previous_step_outputs` | output -> next input | Done |
 
 ## Streaming
 
 | Feature | Agno | agnogo | Parity |
 |---------|------|--------|--------|
-| Token-level streaming | `stream=True` | `RunStreamReal()` + `StreamProvider` | ✅ |
-| Word-level fallback | N/A | `RunStream()` | ✅ |
-| Stream events | `RunOutputEvent` types | `StreamEvent` + `StreamChunk` | ✅ |
-| Tool calls in stream | Accumulated across chunks | `ToolCallDelta` accumulation | ✅ |
+| Token-level streaming | `stream=True` | `RunStreamReal()` + `StreamProvider` | Done |
+| Word-level fallback | N/A | `RunStream()` | Done |
+| Stream events | `RunOutputEvent` types | `StreamEvent` + `StreamChunk` | Done |
+| Tool calls in stream | Accumulated across chunks | `ToolCallDelta` accumulation | Done |
 
 ## Model Providers
 
 | Provider | Agno | agnogo | Parity |
 |----------|------|--------|--------|
-| OpenAI | ✅ | ✅ | ✅ |
-| Anthropic (Claude) | ✅ | ✅ | ✅ |
-| Google Gemini | ✅ | ✅ | ✅ |
-| Ollama | ✅ | ✅ | ✅ |
-| xAI (Grok) | ✅ | ✅ | ✅ |
-| DeepSeek | ✅ | ✅ | ✅ |
-| Groq | ✅ | ✅ | ✅ |
-| Together | ✅ | ✅ | ✅ |
-| Mistral | ✅ | ✅ | ✅ |
-| Perplexity | ✅ | ✅ | ✅ |
-| Azure OpenAI | ✅ | ❌ | 🔲 |
-| Vertex AI | ✅ | ❌ | 🔲 |
-| Cohere | ✅ | ❌ | 🔲 |
-| 28 more niche | ✅ | ❌ | 🔲 |
+| OpenAI | Yes | Yes | Done |
+| Anthropic (Claude) | Yes | Yes | Done |
+| Google Gemini | Yes | Yes | Done |
+| Ollama | Yes | Yes | Done |
+| xAI (Grok) | Yes | Yes | Done |
+| DeepSeek | Yes | Yes | Done |
+| Groq | Yes | Yes | Done |
+| Together | Yes | Yes | Done |
+| Mistral | Yes | Yes | Done |
+| Perplexity | Yes | Yes | Done |
+| Azure OpenAI | Yes | -- | Todo |
+| Vertex AI | Yes | -- | Todo |
+| Cohere | Yes | -- | Todo |
+| 28 more niche | Yes | -- | Todo |
 
 ## Vector Databases
 
 | VectorDB | Agno | agnogo | Parity |
 |----------|------|--------|--------|
-| pgvector | ✅ | ✅ | ✅ |
-| Qdrant | ✅ | ✅ | ✅ |
-| ChromaDB | ✅ | ✅ | ✅ |
-| Pinecone | ✅ | ✅ | ✅ |
-| Milvus | ✅ | ❌ | 🔲 |
-| Weaviate | ✅ | ❌ | 🔲 |
-| Redis (vector) | ✅ | ❌ | 🔲 |
-| 11 more | ✅ | ❌ | 🔲 |
+| pgvector | Yes | Yes | Done |
+| Qdrant | Yes | Yes | Done |
+| ChromaDB | Yes | Yes | Done |
+| Pinecone | Yes | Yes | Done |
+| Milvus | Yes | -- | Todo |
+| Weaviate | Yes | -- | Todo |
+| Redis (vector) | Yes | -- | Todo |
+| 11 more | Yes | -- | Todo |
 
 ## Session Storage
 
 | Storage | Agno | agnogo | Parity |
 |---------|------|--------|--------|
-| In-memory | ✅ | ✅ | ✅ |
-| PostgreSQL | ✅ | ✅ | ✅ |
-| SQLite | ✅ | ✅ | ✅ |
-| Redis | ✅ | ✅ | ✅ |
-| MySQL | ✅ | ✅ | ✅ |
-| MongoDB | ✅ | ❌ | 🔲 |
-| DynamoDB | ✅ | ❌ | 🔲 |
-| 6 more | ✅ | ❌ | 🔲 |
+| In-memory | Yes | Yes | Done |
+| PostgreSQL | Yes | Yes | Done |
+| SQLite | Yes | Yes | Done |
+| Redis | Yes | Yes | Done |
+| MySQL | Yes | Yes | Done |
+| MongoDB | Yes | -- | Todo |
+| DynamoDB | Yes | -- | Todo |
+| 6 more | Yes | -- | Todo |
 
 ## Built-in Tools
 
 | Tool | Agno | agnogo | Parity |
 |------|------|--------|--------|
-| Calculator | ✅ | ✅ | ✅ |
-| Shell | ✅ | ✅ | ✅ |
-| HTTP request | ✅ | ✅ | ✅ |
-| File (read/write/list) | ✅ | ✅ | ✅ |
-| Web browser (fetch URL) | ✅ | ✅ | ✅ |
-| DuckDuckGo search | ✅ | ✅ | ✅ |
-| Wikipedia | ✅ | ✅ | ✅ |
-| Email (SMTP) | ✅ | ✅ | ✅ |
-| SQL query | ✅ | ✅ | ✅ |
-| JSON parse/format | ✅ | ✅ | ✅ |
-| CSV read | ✅ | ✅ | ✅ |
-| Slack | ✅ | ✅ | ✅ |
-| GitHub | ✅ | ✅ | ✅ |
-| Docker | ✅ | ✅ | ✅ |
-| Google Search | ✅ | ✅ | ✅ |
-| DALL-E | ✅ | ❌ | 🔲 |
-| Discord | ✅ | ❌ | 🔲 |
-| Telegram | ✅ | ❌ | 🔲 |
-| Jira | ✅ | ❌ | 🔲 |
-| 100+ more | ✅ | ❌ | 🔲 |
+| Calculator | Yes | Yes | Done |
+| Shell | Yes | Yes | Done |
+| HTTP request | Yes | Yes | Done |
+| File (read/write/list) | Yes | Yes | Done |
+| Web browser (fetch URL) | Yes | Yes | Done |
+| DuckDuckGo search | Yes | Yes | Done |
+| Wikipedia | Yes | Yes | Done |
+| Email (SMTP) | Yes | Yes | Done |
+| SQL query | Yes | Yes | Done |
+| JSON parse/format | Yes | Yes | Done |
+| CSV read | Yes | Yes | Done |
+| Slack | Yes | Yes | Done |
+| GitHub | Yes | Yes | Done |
+| Docker | Yes | Yes | Done |
+| Google Search | Yes | Yes | Done |
+| Env | Yes | Yes | Done |
+| Regex | -- | Yes | Go-only |
+| Base64 | -- | Yes | Go-only |
+| Hash (SHA-256, MD5) | -- | Yes | Go-only |
+| UUID | -- | Yes | Go-only |
+| TimeTool | -- | Yes | Go-only |
+| TemplateTool | -- | Yes | Go-only |
+| YAML | -- | Yes | Go-only |
+| XML | -- | Yes | Go-only |
+| Diff | -- | Yes | Go-only |
+| Archive (tar/zip) | -- | Yes | Go-only |
+| Crypto (AES) | -- | Yes | Go-only |
+| DNS | -- | Yes | Go-only |
+| TCP | -- | Yes | Go-only |
+| Markdown | -- | Yes | Go-only |
+| PDFTool | -- | Yes | Go-only |
+| ImageTool | -- | Yes | Go-only |
+| CronTool | -- | Yes | Go-only |
+| Semver | -- | Yes | Go-only |
+| MetricsTool | -- | Yes | Go-only |
+| DALL-E | Yes | -- | Todo |
+| Discord | Yes | -- | Todo |
+| Telegram | Yes | -- | Todo |
+| Jira | Yes | -- | Todo |
+| 100+ more | Yes | -- | Todo |
 
 ## Debug & Observability
 
 | Feature | Agno | agnogo | Parity |
 |---------|------|--------|--------|
-| Debug mode | `debug_mode=True` | `DebugConfig` (level 1+2) | ✅ |
-| Trace hooks | AgentOS telemetry | `Trace` (8 hooks) | ✅ |
-| Print response | `print_response()` | `PrintResponse()` | ✅ |
-| CLI app | `cli_app()` | `CLI()` | ✅ |
-| Serialization | `to_dict()`/`from_dict()` | `ToDict()`/`ToJSON()` | ✅ |
-| OpenTelemetry | ✅ | ❌ | 🔲 |
-| AgentOS dashboard | ✅ | ❌ (use Trace hooks) | 🔲 |
+| Debug mode | `debug_mode=True` | `DebugConfig` (level 1+2) | Done |
+| Trace hooks | AgentOS telemetry | `Trace` (8 hooks) | Done |
+| Print response | `print_response()` | `PrintResponse()` | Done |
+| CLI app | `cli_app()` | `CLI()` | Done |
+| Serialization | `to_dict()`/`from_dict()` | `ToDict()`/`ToJSON()` | Done |
+| OpenTelemetry | Yes | -- | Todo |
+| AgentOS dashboard | Yes | -- (use Trace hooks) | Todo |
 
 ## Other
 
 | Feature | Agno | agnogo | Parity |
 |---------|------|--------|--------|
-| Structured output | `output_schema` | `RunStructured[T]()` | ✅ |
-| Followup questions | `followups=True` | ❌ | 🔲 |
-| Learning machine | `learning=True` | ❌ | 🔲 |
-| MCP tools | `MCPTools` | ❌ | 🔲 |
-| Culture manager | experimental | ❌ | 🔲 |
-| Compression | `compress_tool_results` | ❌ | 🔲 |
+| Structured output | `output_schema` | `RunStructured[T]()` | Done |
+| Followup questions | `followups=True` | -- | Todo |
+| Learning machine | `learning=True` | -- | Todo |
+| MCP tools | `MCPTools` | -- | Todo |
+| Culture manager | experimental | -- | Todo |
+| Compression | `compress_tool_results` | -- | Todo |
 
 ---
 
@@ -194,18 +214,22 @@ These features exist only in agnogo and have no equivalent in the Python Agno li
 
 | Feature | Description |
 |---------|-------------|
-| `Agent()` smart constructor | One-liner agent creation with auto-detected provider from env vars |
-| `autodetect` side-effect import | `import _ "agnogo/autodetect"` registers provider from `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc. |
+| `Agent()` smart constructor | One-liner agent creation with auto-detected provider from env vars (single import) |
+| `WithOpenAI()` / `WithAnthropic()` | Explicit provider selection without manual import of provider packages |
 | `Ask()` / `AskStream()` | Session-free one-shot API -- no session management needed |
 | `AskStructured[T]()` | Generic one-shot structured output |
 | `TypedTool[In, Out]()` | Generic typed tools with struct tags (`desc`, `required`, `enum`) |
 | `agent.Serve()` / `Handler()` | Built-in HTTP server with `/ask` and `/health` endpoints |
+| `WithMaxConcurrent()` / `WithMaxBodySize()` | Serve hardening: concurrency limits and request body size limits |
 | `Then()` / `All()` / `Race()` / `Map()` | Pipeline and concurrency combinators for chaining agents |
 | `Fallback()` | Automatic failover between two providers |
 | `MultiProvider()` | Try N providers in order until one succeeds |
 | `CircuitBreaker()` | Circuit breaker pattern (closed/open/half-open) for providers |
-| `RateLimiter()` | Token bucket rate limiting for providers |
+| `RateLimiter()` | Token bucket rate limiting with `Close()` for cleanup |
 | `TimeoutProvider()` | Per-request deadline wrapper for providers |
+| `Closeable` / `CloseProvider()` | Resource cleanup interface for providers and wrappers |
+| `ProviderError` / `ToolError` | Structured errors with `IsRetryable()`, `IsRateLimited()`, `RetryAfter()` (package-level functions) |
+| `StreamProvider` | Real SSE streaming for OpenAI-compatible providers |
 | `MetricsCollector` | Aggregated telemetry (counts, latencies, costs) with HTTP endpoint |
 | `Explain()` | Print human-readable agent configuration summary |
 | `Validate()` | Static analysis for common agent misconfigurations |
@@ -214,7 +238,13 @@ These features exist only in agnogo and have no equivalent in the Python Agno li
 | `AgentMiddleware()` | HTTP middleware to inject agent into request context |
 | `AgentFromContext()` | Retrieve agent from `context.Context` |
 | `AgentHandler()` | Ready-made HTTP handler accepting `{"message":"..."}` POST bodies |
-| `HallucinationGuard` | Detect and retry when LLM skips available tools |
+| `HallucinationGuard` | Severity levels ("likely" blocks, "possible" warns), weather/financial/time patterns |
+| `NewGraph()` | Graph workflows with conditional edges and shared state |
+| `NewRunContext()` / `RunCtx()` | Dependency injection: pass user info, tenant, flags to tools via context |
+| `NewEventBus()` / `WithEvents()` | Pub/sub event system for decoupled observability |
+| `WithHooks()` | Middleware hook chain wrapping every Run call |
+| `WithSummarize(n)` | Auto-summarize old messages to save context window |
+| 19 utility tools | regex, base64, hash, uuid, time, env, template, yaml, xml, diff, archive, crypto, dns, tcp, markdown, pdf, image, cron, semver, metrics |
 
 ---
 
@@ -222,23 +252,24 @@ These features exist only in agnogo and have no equivalent in the Python Agno li
 
 | Category | Agno | agnogo | Coverage |
 |----------|------|--------|----------|
-| Core features | 15 | 15 | **100%** |
-| Session/Memory | 10 | 8 | **80%** |
-| Knowledge/RAG | 5 | 3 | **60%** |
-| Reasoning | 4 | 3 | **75%** |
-| Teams | 5 | 4 | **80%** |
-| Workflows | 7 | 6 | **86%** |
-| Streaming | 4 | 4 | **100%** |
-| Providers | 41 | 10 | **24%** |
-| Vector DBs | 18 | 4 | **22%** |
-| Storage | 13 | 5 | **38%** |
-| Built-in tools | 129 | 16 | **12%** |
-| Debug/Observability | 7 | 7 | **100%** |
-| Go-exclusive features | 0 | 20 | -- |
-| **Core framework** | | | **~92%** |
-| **Including integrations** | | | **~42%** |
+| Core features | 15 | 15 | 100% |
+| Session/Memory | 10 | 8 | 80% |
+| Knowledge/RAG | 5 | 3 | 60% |
+| Reasoning | 4 | 3 | 75% |
+| Teams | 5 | 4 | 80% |
+| Workflows | 7 | 6 | 86% |
+| Streaming | 4 | 4 | 100% |
+| Providers | 41 | 10 | 24% |
+| Vector DBs | 18 | 4 | 22% |
+| Storage | 13 | 5 | 38% |
+| Built-in tools | 129 | 35 | 27% |
+| Debug/Observability | 7 | 7 | 100% |
+| Go-exclusive features | 0 | 31 | -- |
+| Tests | | 222 | |
+| Core framework | | | ~92% |
+| Including integrations | | | ~46% |
 
-The core agent framework is at ~92% parity. The gap is mainly integrations (providers, vector DBs, tools) which are additive and can be contributed incrementally. agnogo also includes 20 Go-exclusive features (pipelines, resilience, observability, HTTP serving, batch processing) with no Python equivalent.
+The core agent framework is at ~92% parity. The gap is mainly integrations (providers, vector DBs, tools) which are additive and can be contributed incrementally. agnogo also includes 31 Go-exclusive features (pipelines, resilience, observability, HTTP serving, batch processing, structured errors, Closeable, StreamProvider, serve hardening) with no Python equivalent.
 
 ---
 
@@ -250,5 +281,17 @@ The core agent framework is at ~92% parity. The gap is mainly integrations (prov
 4. **MongoDB storage** -- popular NoSQL backend
 5. **Azure OpenAI provider** -- enterprise customers
 6. **DALL-E tool** -- image generation
-7. **More tests** -- integration tests for each provider/tool
-8. **OpenTelemetry export** -- bridge MetricsCollector to OTLP (MetricsCollector now covers local observability)
+7. **OpenTelemetry export** -- bridge MetricsCollector to OTLP
+
+## Completed in v0.2.0
+
+- Single import (no more `import _ "autodetect"`)
+- Structured errors (`ProviderError`, `ToolError` with fields `Tool`, `Message`, `Err`)
+- Package-level error helpers: `IsRetryable()`, `IsRateLimited()`, `RetryAfter()`
+- Provider upgrades (connection pooling, 429 handling, Retry-After, `StreamProvider`)
+- `Closeable` interface and `CloseProvider()` for resource cleanup
+- Serve hardening (`WithMaxConcurrent()`, `WithMaxBodySize()`)
+- Hallucination guard severity levels ("likely" blocks, "possible" warns)
+- 10 upgraded tools (expression parser calculator, HTML stripping, pagination, configurable limits)
+- 19 new utility tools (regex, base64, hash, uuid, time, env, template, yaml, xml, diff, archive, crypto, dns, tcp, markdown, pdf, image, cron, semver, metrics)
+- 222 tests (up from 133)

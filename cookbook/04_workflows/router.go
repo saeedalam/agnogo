@@ -12,30 +12,12 @@ import (
 	"strings"
 
 	"github.com/saeedalam/agnogo"
-	"github.com/saeedalam/agnogo/providers/openai"
 )
 
 func main() {
-	model := openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4.1-mini")
-	debug := agnogo.DefaultDebug()
-
-	refundAgent := agnogo.New(agnogo.Config{
-		Model:        model,
-		Instructions: "You handle refund requests. Ask for the order number and process the refund. Be empathetic.",
-		Debug:        &debug,
-	})
-
-	techAgent := agnogo.New(agnogo.Config{
-		Model:        model,
-		Instructions: "You handle technical support. Help troubleshoot issues step by step.",
-		Debug:        &debug,
-	})
-
-	salesAgent := agnogo.New(agnogo.Config{
-		Model:        model,
-		Instructions: "You handle sales inquiries. Describe products and pricing enthusiastically.",
-		Debug:        &debug,
-	})
+	refundAgent := agnogo.Agent("You handle refund requests. Ask for the order number and process the refund. Be empathetic.")
+	techAgent := agnogo.Agent("You handle technical support. Help troubleshoot issues step by step.")
+	salesAgent := agnogo.Agent("You handle sales inquiries. Describe products and pricing enthusiastically.")
 
 	wf := agnogo.Route(
 		func(ctx context.Context, input string) string {

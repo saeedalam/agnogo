@@ -14,21 +14,13 @@ import (
 	"strings"
 
 	"github.com/saeedalam/agnogo"
-	"github.com/saeedalam/agnogo/providers/openai"
 )
 
 var emailRegex = regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
 var phoneRegex = regexp.MustCompile(`\+?\d[\d\s-]{8,}\d`)
 
 func main() {
-	model := openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4.1-mini")
-	debug := agnogo.DefaultDebug()
-
-	agent := agnogo.New(agnogo.Config{
-		Model:        model,
-		Instructions: "You are a helpful assistant. Answer questions freely.",
-		Debug:        &debug,
-	})
+	agent := agnogo.Agent("You are a helpful assistant. Answer questions freely.")
 
 	// Input guardrail: block prompt injection attempts
 	agent.InputGuardrail("anti-injection", func(ctx context.Context, s *agnogo.Session, msg string) error {
