@@ -168,6 +168,18 @@ func Tools(tools ...ToolDef) Option {
 
 // ── With*() options (for things that need parameters) ────────
 
+// WithPromptFunc sets a dynamic system prompt that can change per session.
+// Overrides the static instructions string.
+//
+//	agent := agnogo.Agent("default prompt", agnogo.WithPromptFunc(func(s *Session) string {
+//	    return "You are helping user " + s.GetMemory("name")
+//	}))
+func WithPromptFunc(fn func(session *Session) string) Option {
+	return optionFunc(func(sc *smartConfig) {
+		sc.PromptFunc = fn
+	})
+}
+
 // WithModel sets a specific model provider, bypassing auto-detection.
 func WithModel(p ModelProvider) Option {
 	return optionFunc(func(sc *smartConfig) {
