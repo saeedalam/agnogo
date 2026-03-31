@@ -8,6 +8,8 @@ Go agent framework. Build, serve, and scale AI agents.
 go get github.com/saeedalam/agnogo
 ```
 
+**New here?** Start with the [5-Minute Quickstart](QUICKSTART.md). Full API reference in [GUIDE.md](GUIDE.md).
+
 ## Quick Start
 
 ```go
