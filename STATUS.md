@@ -1,6 +1,6 @@
 # agnogo Status — Comparison with Agno
 
-> Last updated: 2026-03-29
+> Last updated: 2026-03-31
 
 ## Overview
 
@@ -188,6 +188,36 @@ This document tracks feature parity between the two projects.
 
 ---
 
+## Go-Exclusive Features (Not in Agno Python)
+
+These features exist only in agnogo and have no equivalent in the Python Agno library:
+
+| Feature | Description |
+|---------|-------------|
+| `Agent()` smart constructor | One-liner agent creation with auto-detected provider from env vars |
+| `autodetect` side-effect import | `import _ "agnogo/autodetect"` registers provider from `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc. |
+| `Ask()` / `AskStream()` | Session-free one-shot API -- no session management needed |
+| `AskStructured[T]()` | Generic one-shot structured output |
+| `TypedTool[In, Out]()` | Generic typed tools with struct tags (`desc`, `required`, `enum`) |
+| `agent.Serve()` / `Handler()` | Built-in HTTP server with `/ask` and `/health` endpoints |
+| `Then()` / `All()` / `Race()` / `Map()` | Pipeline and concurrency combinators for chaining agents |
+| `Fallback()` | Automatic failover between two providers |
+| `MultiProvider()` | Try N providers in order until one succeeds |
+| `CircuitBreaker()` | Circuit breaker pattern (closed/open/half-open) for providers |
+| `RateLimiter()` | Token bucket rate limiting for providers |
+| `TimeoutProvider()` | Per-request deadline wrapper for providers |
+| `MetricsCollector` | Aggregated telemetry (counts, latencies, costs) with HTTP endpoint |
+| `Explain()` | Print human-readable agent configuration summary |
+| `Validate()` | Static analysis for common agent misconfigurations |
+| `Benchmark()` | Performance benchmarking with warmup, concurrency, and percentiles |
+| `WorkerPool` / `Batch()` | Concurrent batch processing with fixed goroutine pool |
+| `AgentMiddleware()` | HTTP middleware to inject agent into request context |
+| `AgentFromContext()` | Retrieve agent from `context.Context` |
+| `AgentHandler()` | Ready-made HTTP handler accepting `{"message":"..."}` POST bodies |
+| `HallucinationGuard` | Detect and retry when LLM skips available tools |
+
+---
+
 ## Summary
 
 | Category | Agno | agnogo | Coverage |
@@ -203,21 +233,22 @@ This document tracks feature parity between the two projects.
 | Vector DBs | 18 | 4 | **22%** |
 | Storage | 13 | 5 | **38%** |
 | Built-in tools | 129 | 16 | **12%** |
-| Debug/Observability | 7 | 5 | **71%** |
-| **Core framework** | | | **~90%** |
-| **Including integrations** | | | **~40%** |
+| Debug/Observability | 7 | 7 | **100%** |
+| Go-exclusive features | 0 | 20 | -- |
+| **Core framework** | | | **~92%** |
+| **Including integrations** | | | **~42%** |
 
-The core agent framework is at ~90% parity. The gap is mainly integrations (providers, vector DBs, tools) which are additive and can be contributed incrementally.
+The core agent framework is at ~92% parity. The gap is mainly integrations (providers, vector DBs, tools) which are additive and can be contributed incrementally. agnogo also includes 20 Go-exclusive features (pipelines, resilience, observability, HTTP serving, batch processing) with no Python equivalent.
 
 ---
 
 ## Remaining High-Priority Tasks
 
-1. **Session summaries** — auto-generate conversation summaries
-2. **MCP protocol** — Model Context Protocol tool support
-3. **Learning machine** — learn from interactions
-4. **MongoDB storage** — popular NoSQL backend
-5. **Azure OpenAI provider** — enterprise customers
-6. **DALL-E tool** — image generation
-7. **More tests** — integration tests for each provider/tool
-8. **OpenTelemetry** — production observability
+1. **Session summaries** -- auto-generate conversation summaries
+2. **MCP protocol** -- Model Context Protocol tool support
+3. **Learning machine** -- learn from interactions
+4. **MongoDB storage** -- popular NoSQL backend
+5. **Azure OpenAI provider** -- enterprise customers
+6. **DALL-E tool** -- image generation
+7. **More tests** -- integration tests for each provider/tool
+8. **OpenTelemetry export** -- bridge MetricsCollector to OTLP (MetricsCollector now covers local observability)

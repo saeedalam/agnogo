@@ -8,6 +8,28 @@ go get github.com/saeedalam/agnogo
 
 ## Quick Start
 
+The easiest way -- auto-detect your provider from environment variables:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/saeedalam/agnogo"
+    _ "github.com/saeedalam/agnogo/autodetect"
+)
+
+func main() {
+    agent := agnogo.Agent("You are a helpful assistant.")
+    answer, _ := agent.Ask(context.Background(), "Hello!")
+    fmt.Println(answer)
+}
+```
+
+Power-user mode -- explicit provider, tools, memory, and debug:
+
 ```go
 package main
 
@@ -37,6 +59,207 @@ func main() {
     // Interactive CLI
     agent.CLI()
 }
+```
+
+---
+
+## One-Shot (Ask)
+
+Skip session management entirely -- just ask a question and get an answer:
+
+```go
+// Simple question/answer
+answer, err := agent.Ask(ctx, "What is the capital of France?")
+
+// Streaming one-shot
+ch := agent.AskStream(ctx, "Tell me a story")
+for chunk := range ch {
+    fmt.Print(chunk.Text)
+    if chunk.Done { break }
+}
+
+// Structured one-shot -- parse the answer into a typed struct
+var result MyStruct
+err := agnogo.AskStructured[MyStruct](ctx, agent, "Extract the data", &result)
+```
+
+---
+
+## Typed Tools
+
+Define tools using Go generics and struct tags instead of manual parameter maps:
+
+```go
+type WeatherInput struct {
+    City string `json:"city" desc:"City name" required:"true"`
+    Unit string `json:"unit" desc:"celsius or fahrenheit" enum:"celsius,fahrenheit"`
+}
+
+type WeatherOutput struct {
+    Temp    float64 `json:"temp"`
+    Summary string  `json:"summary"`
+}
+
+tool := agnogo.TypedTool[WeatherInput, WeatherOutput](
+    "get_weather", "Get weather for a city",
+    func(ctx context.Context, in WeatherInput) (WeatherOutput, error) {
+        return fetchWeather(in.City, in.Unit)
+    },
+)
+
+agent.AddTools(tool)
+```
+
+Struct tags supported: `json` (name), `desc` (description), `required` ("true"), `enum` (comma-separated values).
+
+---
+
+## HTTP Server
+
+Expose an agent as an HTTP API with one call:
+
+```go
+// Quick start -- serves /ask (POST) and /health (GET)
+agent.Serve(":8080")
+
+// Or get the http.Handler to mount on your own mux
+mux := http.NewServeMux()
+mux.Handle("/agent/", http.StripPrefix("/agent", agent.Handler()))
+http.ListenAndServe(":8080", mux)
+```
+
+---
+
+## Pipelines and Concurrency
+
+Chain agents and run them concurrently:
+
+```go
+// Sequential pipeline -- output of one feeds into the next
+result, _ := agent1.Then(agent2).Then(agent3).Run(ctx, "input")
+
+// Fan-out -- run agents in parallel, collect all results
+results, _ := agnogo.All(agent1, agent2, agent3).Run(ctx, "input")
+
+// Race -- return the first agent to finish
+result, _ := agnogo.Race(agent1, agent2).Run(ctx, "input")
+
+// Map -- apply one agent to many inputs concurrently
+results := agnogo.Map(ctx, agent, []string{"a", "b", "c"}, 4) // 4 workers
+```
+
+---
+
+## Resilience
+
+Wrap providers for fault tolerance:
+
+```go
+// Fallback to a secondary provider on error
+model := agnogo.Fallback(primaryModel, backupModel)
+
+// Try multiple providers in order
+model := agnogo.MultiProvider(openaiModel, claudeModel, geminiModel)
+
+// Circuit breaker -- stop hammering a failing provider
+model := agnogo.CircuitBreaker(openaiModel,
+    agnogo.WithFailureThreshold(5),
+    agnogo.WithResetTimeout(30*time.Second),
+)
+
+// Rate limiter -- token bucket, blocks until a token is available
+model := agnogo.RateLimiter(openaiModel, 60) // 60 requests per minute
+
+// Timeout -- per-request deadline
+model := agnogo.TimeoutProvider(openaiModel, 30*time.Second)
+```
+
+---
+
+## Observability
+
+Inspect, validate, and measure your agents:
+
+```go
+// Explain prints a human-readable summary of the agent's configuration
+agnogo.Explain(agent)
+
+// Validate checks for common misconfigurations
+errs := agnogo.Validate(agent)
+for _, e := range errs {
+    fmt.Println(e.Field, e.Message)
+}
+
+// MetricsCollector aggregates telemetry across runs
+mc := agnogo.NewMetricsCollector()
+agent := agnogo.New(agnogo.Config{
+    Trace: mc.Trace(),
+})
+// ... run the agent ...
+snap := mc.Snapshot() // MetricsSnapshot with counts, latencies, costs
+
+// Expose metrics as an HTTP endpoint (JSON)
+http.Handle("/metrics", mc.Handler())
+```
+
+---
+
+## Batch Processing
+
+Process many messages through an agent concurrently:
+
+```go
+// WorkerPool -- long-lived pool for streaming work
+pool := agnogo.NewWorkerPool(agent, 4) // 4 goroutines
+pool.Start(ctx)
+
+pool.Submit(agnogo.WorkerTask{ID: "t1", Message: "Summarize doc A"})
+pool.Submit(agnogo.WorkerTask{ID: "t2", Message: "Summarize doc B"})
+
+for result := range pool.Results() {
+    fmt.Println(result.ID, result.Text)
+}
+pool.Stop()
+
+// Batch -- one-shot convenience for a slice of tasks
+results := agnogo.Batch(ctx, agent, tasks, 4) // 4 concurrent workers
+```
+
+---
+
+## HTTP Middleware
+
+Integrate agents into existing HTTP servers:
+
+```go
+// Inject the agent into request context
+mux.Handle("/chat", agnogo.AgentMiddleware(agent)(chatHandler))
+
+// Retrieve it downstream
+func chatHandler(w http.ResponseWriter, r *http.Request) {
+    agent := agnogo.AgentFromContext(r.Context())
+    resp, _ := agent.Ask(r.Context(), r.URL.Query().Get("q"))
+    fmt.Fprint(w, resp)
+}
+
+// Or use the built-in handler that accepts {"message":"..."} POST bodies
+mux.HandleFunc("POST /chat", agnogo.AgentHandler(agent))
+```
+
+---
+
+## Benchmark
+
+Measure agent performance with configurable prompts, warmup, and concurrency:
+
+```go
+result := agnogo.Benchmark(ctx, agent, agnogo.BenchmarkConfig{
+    Prompts:     []string{"Hello", "What is 2+2?", "Tell me a joke"},
+    Iterations:  10,
+    Warmup:      2,
+    Concurrency: 4,
+})
+fmt.Printf("p50=%v p99=%v errors=%d\n", result.P50, result.P99, result.Errors)
 ```
 
 ---
@@ -504,5 +727,5 @@ agnogo.CancelRun("run-123")
 ```go
 data := agent.ToDict()  // map[string]any
 json, _ := agent.ToJSON() // []byte
-fmt.Println(agent.String()) // "Agent{tools: [calculator, web_search], max_loops: 8}"
+fmt.Println(agent.String()) // "Core{tools: [calculator, web_search], max_loops: 8}"
 ```

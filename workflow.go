@@ -25,11 +25,11 @@ type SequentialWorkflow struct {
 // WorkflowStep is a named agent in a workflow.
 type WorkflowStep struct {
 	Name  string
-	Agent *Agent
+	Agent *Core
 }
 
 // Step creates a named workflow step.
-func Step(name string, agent *Agent) WorkflowStep {
+func Step(name string, agent *Core) WorkflowStep {
 	return WorkflowStep{Name: name, Agent: agent}
 }
 
@@ -142,13 +142,13 @@ func (w *ParallelWorkflow) Run(ctx context.Context, session *Session, input stri
 //	    return strings.Contains(resp.Text, "DONE") || iteration >= 5
 //	})
 type LoopWorkflow struct {
-	agent     *Agent
+	agent     *Core
 	condition func(resp *Response, iteration int) bool
 	maxIter   int
 }
 
 // Loop creates a workflow that repeats until condition returns true.
-func Loop(agent *Agent, stopWhen func(resp *Response, iteration int) bool) *LoopWorkflow {
+func Loop(agent *Core, stopWhen func(resp *Response, iteration int) bool) *LoopWorkflow {
 	return &LoopWorkflow{agent: agent, condition: stopWhen, maxIter: 10}
 }
 

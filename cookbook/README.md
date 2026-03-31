@@ -61,6 +61,16 @@ export OPENAI_API_KEY=sk-...   # Required for most examples
 |---------|---------------------|
 | `08_providers/multi_provider.go` | Same agent on OpenAI, Claude, Gemini, Ollama |
 
+### 09 -- Easy Mode
+| Example | What it demonstrates |
+|---------|---------------------|
+| `09_easy/one_liner.go` | Agent() with auto-detect, Ask() |
+| `09_easy/typed_tools.go` | TypedTool generics |
+| `09_easy/http_server.go` | agent.Serve() |
+| `09_easy/pipeline.go` | Then(), All(), Race() |
+| `09_easy/resilience.go` | Fallback, CircuitBreaker |
+| `09_easy/batch.go` | Batch processing |
+
 ## Running
 
 ```bash

@@ -166,7 +166,7 @@ func OpenAIStreamResponse(ctx context.Context, apiKey, model, baseURL string, me
 
 // RunStreamReal uses real token-level streaming if the provider supports it.
 // Falls back to word-level streaming if not.
-func (a *Agent) RunStreamReal(ctx context.Context, session *Session, userMessage string) <-chan StreamChunk {
+func (a *Core) RunStreamReal(ctx context.Context, session *Session, userMessage string) <-chan StreamChunk {
 	ch := make(chan StreamChunk, 50)
 
 	sp, ok := a.model.(StreamProvider)

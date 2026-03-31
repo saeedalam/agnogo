@@ -45,16 +45,16 @@ var defaultHallucinationPatterns = []string{
 
 // HallucinationGuard enables automatic hallucination detection.
 // Blocks responses that contain real-time information when no tools were called.
-func (a *Agent) HallucinationGuard() *Agent {
+func (a *Core) HallucinationGuard() *Core {
 	return a.addHallucinationGuard(nil)
 }
 
 // HallucinationGuardWithPatterns enables hallucination detection with custom regex patterns.
-func (a *Agent) HallucinationGuardWithPatterns(extraPatterns []string) *Agent {
+func (a *Core) HallucinationGuardWithPatterns(extraPatterns []string) *Core {
 	return a.addHallucinationGuard(extraPatterns)
 }
 
-func (a *Agent) addHallucinationGuard(extraPatterns []string) *Agent {
+func (a *Core) addHallucinationGuard(extraPatterns []string) *Core {
 	allPatterns := make([]string, 0, len(defaultHallucinationPatterns)+len(extraPatterns))
 	allPatterns = append(allPatterns, defaultHallucinationPatterns...)
 	allPatterns = append(allPatterns, extraPatterns...)

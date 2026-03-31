@@ -1,17 +1,24 @@
-// Package agnogo is a Go agent development kit inspired by Agno (Python).
-// Build AI agents with tools, knowledge, memory, teams, and guardrails.
+// Package agnogo is a Go agent framework for building AI agents with tools,
+// knowledge, memory, teams, workflows, guardrails, and more.
 //
-// Quick start:
+// Quick start (auto-detect provider from env vars):
 //
-//	a := agnogo.New(agnogo.Config{
-//	    Model: agnogo.OpenAI(os.Getenv("OPENAI_API_KEY"), "gpt-4.1-mini"),
+//	import _ "github.com/saeedalam/agnogo/autodetect"
+//
+//	agent := agnogo.Agent("You are a helpful assistant.")
+//	answer, _ := agent.Ask(ctx, "What's the weather in Stockholm?")
+//
+// Power-user mode (explicit configuration):
+//
+//	agent := agnogo.New(agnogo.Config{
+//	    Model:        openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4.1-mini"),
+//	    Instructions: "You are a helpful assistant.",
 //	})
-//	a.Tool("weather", "Get weather for a city", agnogo.Params{
-//	    "city": {Type: "string", Desc: "City name", Required: true},
-//	}, func(ctx context.Context, args map[string]string) (string, error) {
-//	    return getWeather(args["city"])
-//	})
-//	resp, _ := a.Run(ctx, session, "What's the weather in Stockholm?")
+//	resp, _ := agent.Run(ctx, session, "What's the weather in Stockholm?")
+//
+// Serve as HTTP API:
+//
+//	agent.Serve(":8080")
 package agnogo
 
 import (

@@ -17,7 +17,7 @@ import (
 //	resp, _ := team.Run(ctx, session, "I want to book a haircut")
 //	// → routes to "booking" agent
 type Team struct {
-	agents     map[string]*Agent
+	agents     map[string]*Core
 	order      []string
 	routerFunc func(ctx context.Context, msg string, agents []string) (string, error)
 	fallback   string // agent name to use if routing fails
@@ -39,7 +39,7 @@ type TeamConfig struct {
 // NewTeam creates a team with sub-agent routing.
 func NewTeam(cfg TeamConfig) *Team {
 	t := &Team{
-		agents:   make(map[string]*Agent),
+		agents:   make(map[string]*Core),
 		fallback: cfg.Fallback,
 	}
 
@@ -67,7 +67,7 @@ func NewTeam(cfg TeamConfig) *Team {
 }
 
 // Agent registers a sub-agent with a name (used for routing).
-func (t *Team) Agent(name string, agent *Agent) *Team {
+func (t *Team) Agent(name string, agent *Core) *Team {
 	t.agents[name] = agent
 	t.order = append(t.order, name)
 	if t.fallback == "" {

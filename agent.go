@@ -12,19 +12,21 @@ import (
 
 const defaultMaxLoops = 8
 
-// Agent is a stateful AI agent that uses tools to accomplish tasks.
+// Core is the agent engine. Create one with Agent() (smart defaults) or New() (full control).
+//
+// Quick way:
+//
+//	a := agnogo.Agent("You are a helpful assistant.")
+//	answer, _ := a.Ask(ctx, "Hello!")
+//
+// Full control:
 //
 //	a := agnogo.New(agnogo.Config{
-//	    Model:        agnogo.OpenAI(key, "gpt-4.1-mini"),
+//	    Model:        openai.New(key, "gpt-4.1-mini"),
 //	    Instructions: "You are a helpful assistant.",
-//	    Knowledge:    myKB,
-//	    AutoMemory:   true,
-//	    Storage:      myDB,
-//	    Trace:        agnogo.DefaultTrace(),
 //	})
-//	a.Tool("search", "Search the web", params, searchFn)
 //	resp, _ := a.Run(ctx, session, "What's the weather?")
-type Agent struct {
+type Core struct {
 	model        ModelProvider
 	tools        *ToolRegistry
 	instructions string
@@ -44,7 +46,7 @@ type Agent struct {
 	fallbackText string
 }
 
-// Config configures a new Agent.
+// Config configures a new Core.
 type Config struct {
 	Model        ModelProvider
 	Instructions string                        // static system prompt
@@ -63,8 +65,8 @@ type Config struct {
 	FallbackText string                        // text when max loops reached
 }
 
-// New creates an Agent. Panics if Config.Model is nil.
-func New(cfg Config) *Agent {
+// New creates a Core. Panics if Config.Model is nil.
+func New(cfg Config) *Core {
 	if cfg.Model == nil {
 		panic("agnogo: Config.Model is required")
 	}
@@ -93,7 +95,7 @@ func New(cfg Config) *Agent {
 		dbg = *cfg.Debug
 	}
 
-	return &Agent{
+	return &Core{
 		model:        cfg.Model,
 		tools:        NewToolRegistry(),
 		instructions: cfg.Instructions,
@@ -119,7 +121,7 @@ func New(cfg Config) *Agent {
 //	a.Tool("book", "Book appointment", agnogo.Params{
 //	    "date": {Type: "string", Desc: "Date", Required: true},
 //	}, bookFn)
-func (a *Agent) Tool(name, desc string, params Params, fn ToolFunc) *Agent {
+func (a *Core) Tool(name, desc string, params Params, fn ToolFunc) *Core {
 	a.tools.Add(name, desc, params, fn)
 	return a
 }
@@ -128,7 +130,7 @@ func (a *Agent) Tool(name, desc string, params Params, fn ToolFunc) *Agent {
 //
 //	a.AddTools(tools.Calculator()...)
 //	a.AddTools(tools.WebSearch()...)
-func (a *Agent) AddTools(defs ...ToolDef) *Agent {
+func (a *Core) AddTools(defs ...ToolDef) *Core {
 	for _, d := range defs {
 		a.tools.Add(d.Name, d.Desc, d.Params, d.Fn)
 	}
@@ -138,7 +140,7 @@ func (a *Agent) AddTools(defs ...ToolDef) *Agent {
 // ToolWithApproval registers a tool that requires human approval before execution.
 //
 //	a.ToolWithApproval("transfer", "Transfer money", params, transferFn, "Amounts over 1000 need approval")
-func (a *Agent) ToolWithApproval(name, desc string, params Params, fn ToolFunc, reason string) *Agent {
+func (a *Core) ToolWithApproval(name, desc string, params Params, fn ToolFunc, reason string) *Core {
 	t := a.tools.Add(name, desc, params, fn)
 	t.RequireApproval = true
 	t.ApprovalReason = reason
@@ -146,19 +148,19 @@ func (a *Agent) ToolWithApproval(name, desc string, params Params, fn ToolFunc, 
 }
 
 // InputGuardrail adds a pre-execution check.
-func (a *Agent) InputGuardrail(name string, fn func(ctx context.Context, session *Session, msg string) error) *Agent {
+func (a *Core) InputGuardrail(name string, fn func(ctx context.Context, session *Session, msg string) error) *Core {
 	a.inputGuards = append(a.inputGuards, Guardrail{Name: name, Check: fn})
 	return a
 }
 
 // OutputGuardrail adds a post-execution check.
-func (a *Agent) OutputGuardrail(name string, fn func(ctx context.Context, session *Session, msg string) error) *Agent {
+func (a *Core) OutputGuardrail(name string, fn func(ctx context.Context, session *Session, msg string) error) *Core {
 	a.outputGuards = append(a.outputGuards, Guardrail{Name: name, Check: fn})
 	return a
 }
 
 // Tools returns the registry for inspection.
-func (a *Agent) Tools() *ToolRegistry { return a.tools }
+func (a *Core) Tools() *ToolRegistry { return a.tools }
 
 // Response is the result of Run.
 type Response struct {
@@ -172,7 +174,7 @@ type Response struct {
 // Run processes one user message. The main method.
 //
 //	resp, _ := a.Run(ctx, session, "Hello!")
-func (a *Agent) Run(ctx context.Context, session *Session, userMessage string) (*Response, error) {
+func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*Response, error) {
 	if session == nil {
 		return nil, fmt.Errorf("agnogo: session is nil")
 	}
@@ -433,7 +435,7 @@ func generateRunID() string {
 
 // Resume continues after a human approval.
 // Call with approved=true to execute the pending tool, or false to skip it.
-func (a *Agent) Resume(ctx context.Context, session *Session, approved bool) (*Response, error) {
+func (a *Core) Resume(ctx context.Context, session *Session, approved bool) (*Response, error) {
 	toolName := session.GetStr("_pending_tool")
 	argsJSON := session.GetStr("_pending_args")
 	callID := session.GetStr("_pending_call_id")
@@ -465,7 +467,7 @@ func (a *Agent) Resume(ctx context.Context, session *Session, approved bool) (*R
 }
 
 // RunWithStorage loads session, runs, and saves. Convenience for production use.
-func (a *Agent) RunWithStorage(ctx context.Context, sessionID, userMessage string) (*Response, error) {
+func (a *Core) RunWithStorage(ctx context.Context, sessionID, userMessage string) (*Response, error) {
 	if a.storage == nil {
 		return nil, fmt.Errorf("storage not configured")
 	}
@@ -488,7 +490,7 @@ func (a *Agent) RunWithStorage(ctx context.Context, sessionID, userMessage strin
 }
 
 // RunStream streams the response word-by-word. For WebSocket/SSE.
-func (a *Agent) RunStream(ctx context.Context, session *Session, userMessage string) <-chan StreamChunk {
+func (a *Core) RunStream(ctx context.Context, session *Session, userMessage string) <-chan StreamChunk {
 	ch := make(chan StreamChunk, 20)
 	go func() {
 		defer close(ch)
@@ -526,19 +528,19 @@ type StreamChunk struct {
 // ── Agno-equivalent Agent methods ────────────────────────
 
 // SetTools replaces all tools. Agno: agent.set_tools()
-func (a *Agent) SetTools(defs ...ToolDef) *Agent {
+func (a *Core) SetTools(defs ...ToolDef) *Core {
 	a.tools = NewToolRegistry()
 	return a.AddTools(defs...)
 }
 
 // ClearTools removes all tools.
-func (a *Agent) ClearTools() *Agent {
+func (a *Core) ClearTools() *Core {
 	a.tools = NewToolRegistry()
 	return a
 }
 
 // GetSession loads a session from storage. Agno: agent.get_session()
-func (a *Agent) GetSession(ctx context.Context, sessionID string) (*Session, error) {
+func (a *Core) GetSession(ctx context.Context, sessionID string) (*Session, error) {
 	if a.storage == nil {
 		return nil, fmt.Errorf("storage not configured")
 	}
@@ -546,7 +548,7 @@ func (a *Agent) GetSession(ctx context.Context, sessionID string) (*Session, err
 }
 
 // SaveSession persists a session. Agno: agent.save_session()
-func (a *Agent) SaveSession(ctx context.Context, session *Session) error {
+func (a *Core) SaveSession(ctx context.Context, session *Session) error {
 	if a.storage == nil {
 		return fmt.Errorf("storage not configured")
 	}
@@ -554,7 +556,7 @@ func (a *Agent) SaveSession(ctx context.Context, session *Session) error {
 }
 
 // DeleteSession removes a session. Agno: agent.delete_session()
-func (a *Agent) DeleteSession(ctx context.Context, sessionID string) error {
+func (a *Core) DeleteSession(ctx context.Context, sessionID string) error {
 	if a.storage == nil {
 		return fmt.Errorf("storage not configured")
 	}
@@ -562,7 +564,7 @@ func (a *Agent) DeleteSession(ctx context.Context, sessionID string) error {
 }
 
 // ListSessions returns recent sessions. Agno: agent.get_sessions()
-func (a *Agent) ListSessions(ctx context.Context, limit int) ([]*Session, error) {
+func (a *Core) ListSessions(ctx context.Context, limit int) ([]*Session, error) {
 	if a.storage == nil {
 		return nil, fmt.Errorf("storage not configured")
 	}
@@ -570,7 +572,7 @@ func (a *Agent) ListSessions(ctx context.Context, limit int) ([]*Session, error)
 }
 
 // AddKnowledge adds content to the knowledge store. Agno: agent.add_to_knowledge()
-func (a *Agent) AddKnowledge(ctx context.Context, key, content string) error {
+func (a *Core) AddKnowledge(ctx context.Context, key, content string) error {
 	if ks, ok := a.storage.(KnowledgeStore); ok {
 		return ks.AddKnowledge(ctx, key, content)
 	}
@@ -578,7 +580,7 @@ func (a *Agent) AddKnowledge(ctx context.Context, key, content string) error {
 }
 
 // GetChatHistory returns conversation messages. Agno: agent.get_chat_history()
-func (a *Agent) GetChatHistory(ctx context.Context, sessionID string) ([]Message, error) {
+func (a *Core) GetChatHistory(ctx context.Context, sessionID string) ([]Message, error) {
 	session, err := a.GetSession(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -587,7 +589,7 @@ func (a *Agent) GetChatHistory(ctx context.Context, sessionID string) ([]Message
 }
 
 // GetMemories returns learned facts. Agno: agent.get_user_memories()
-func (a *Agent) GetMemories(ctx context.Context, sessionID string) (map[string]string, error) {
+func (a *Core) GetMemories(ctx context.Context, sessionID string) (map[string]string, error) {
 	session, err := a.GetSession(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -596,7 +598,7 @@ func (a *Agent) GetMemories(ctx context.Context, sessionID string) (map[string]s
 }
 
 // PrintResponse runs the agent and prints the response. Agno: agent.print_response()
-func (a *Agent) PrintResponse(ctx context.Context, session *Session, message string) {
+func (a *Core) PrintResponse(ctx context.Context, session *Session, message string) {
 	resp, err := a.Run(ctx, session, message)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)

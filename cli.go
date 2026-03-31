@@ -13,7 +13,7 @@ import (
 //
 //	agent := agnogo.New(agnogo.Config{...})
 //	agent.CLI() // interactive terminal
-func (a *Agent) CLI() {
+func (a *Core) CLI() {
 	ctx := context.Background()
 	session := NewSession("cli")
 

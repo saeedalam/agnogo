@@ -2,9 +2,9 @@ package agnogo
 
 import "encoding/json"
 
-// AgentConfig is a serializable representation of an agent's configuration.
+// CoreConfig is a serializable representation of an agent's configuration.
 // Matches Agno's to_dict() / from_dict() pattern.
-type AgentConfig struct {
+type CoreConfig struct {
 	Name         string            `json:"name,omitempty"`
 	Instructions string            `json:"instructions,omitempty"`
 	Tools        []string          `json:"tools,omitempty"`       // tool names
@@ -16,7 +16,7 @@ type AgentConfig struct {
 // ToDict serializes the agent configuration to a map.
 // Does NOT include the model provider (not serializable) or tool functions.
 // Matches Agno: agent.to_dict()
-func (a *Agent) ToDict() map[string]any {
+func (a *Core) ToDict() map[string]any {
 	toolNames := make([]string, 0, a.tools.Count())
 	for _, t := range a.tools.List() {
 		toolNames = append(toolNames, t.Name)
@@ -30,17 +30,17 @@ func (a *Agent) ToDict() map[string]any {
 }
 
 // ToJSON serializes the agent configuration to JSON bytes.
-func (a *Agent) ToJSON() ([]byte, error) {
+func (a *Core) ToJSON() ([]byte, error) {
 	return json.Marshal(a.ToDict())
 }
 
 // String returns a human-readable description of the agent.
-func (a *Agent) String() string {
+func (a *Core) String() string {
 	tools := a.tools.Names()
 	if tools == "" {
 		tools = "(none)"
 	}
-	return "Agent{tools: [" + tools + "], max_loops: " + itoa(a.maxLoops) + "}"
+	return "Core{tools: [" + tools + "], max_loops: " + itoa(a.maxLoops) + "}"
 }
 
 func itoa(n int) string {
