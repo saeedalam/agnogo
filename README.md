@@ -395,6 +395,13 @@ agent.OutputGuardrail("no-pii", func(ctx context.Context, s *agnogo.Session, msg
 
 // Hallucination detection: retries when LLM fabricates instead of using tools
 agent.HallucinationGuard()
+
+// Semantic grounding: verifies responses are based on tool outputs (TF-IDF)
+agent := agnogo.Agent("...", agnogo.Reliable(
+    agnogo.WithCustomHallucination(&agnogo.HybridHallucinationChecker{
+        MinGrounding: 0.3, // regex when no tools called, TF-IDF when tools called
+    }),
+))
 ```
 
 ### Production Safety (`Reliable()`)
