@@ -327,3 +327,74 @@ func (s *Session) HasConsent(purpose string) bool {
 	defer s.mu.Unlock()
 	return s.Metadata["_consent_"+purpose] == "true"
 }
+
+// ── Pluggable PII Scanner guardrails ────────────────────
+
+// piiOutputGuardrailWithScanner returns a guardrail that uses a custom PIIScanner.
+func piiOutputGuardrailWithScanner(scanner PIIScanner, config *PIIConfig) Guardrail {
+	return Guardrail{
+		Name: "pii-output-guard",
+		Check: func(_ context.Context, _ *Session, msg string) error {
+			matches := scanner.Detect(msg)
+			if len(matches) == 0 {
+				return nil
+			}
+			// Filter allowed types
+			allowSet := make(map[PIIType]bool, len(config.AllowedTypes))
+			for _, t := range config.AllowedTypes {
+				allowSet[t] = true
+			}
+			var blocked []PIIMatch
+			for _, m := range matches {
+				if !allowSet[m.Type] {
+					blocked = append(blocked, m)
+				}
+			}
+			if len(blocked) == 0 {
+				return nil
+			}
+			if config.OnDetected != nil {
+				config.OnDetected(blocked)
+			}
+			return fmt.Errorf("response blocked: contains %d PII item(s)", len(blocked))
+		},
+	}
+}
+
+// piiInputGuardrailWithScanner returns a guardrail that uses a custom PIIScanner.
+func piiInputGuardrailWithScanner(scanner PIIScanner, config *PIIConfig) Guardrail {
+	return Guardrail{
+		Name: "pii-input-guard",
+		Check: func(_ context.Context, session *Session, msg string) error {
+			matches := scanner.Detect(msg)
+			// Filter allowed types
+			allowSet := make(map[PIIType]bool, len(config.AllowedTypes))
+			for _, t := range config.AllowedTypes {
+				allowSet[t] = true
+			}
+			var relevant []PIIMatch
+			for _, m := range matches {
+				if !allowSet[m.Type] {
+					relevant = append(relevant, m)
+				}
+			}
+			if len(relevant) == 0 {
+				return nil
+			}
+			if config.OnDetected != nil {
+				config.OnDetected(relevant)
+			}
+			// Redact the last user message in session history
+			redacted := scanner.Redact(msg)
+			session.mu.Lock()
+			for i := len(session.History) - 1; i >= 0; i-- {
+				if session.History[i].Role == "user" && session.History[i].Content == msg {
+					session.History[i].Content = redacted
+					break
+				}
+			}
+			session.mu.Unlock()
+			return nil // allow the message through (redacted in history)
+		},
+	}
+}

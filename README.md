@@ -397,6 +397,80 @@ agent.OutputGuardrail("no-pii", func(ctx context.Context, s *agnogo.Session, msg
 agent.HallucinationGuard()
 ```
 
+### Production Safety (`Reliable()`)
+
+One-liner that enables cost budgets, PII detection, hallucination guard, tool validation, and confidence scoring:
+
+```go
+agent := agnogo.Agent("...", agnogo.Reliable())
+```
+
+Every component is pluggable — bring your own implementations:
+
+```go
+agent := agnogo.Agent("...", agnogo.Reliable(
+    agnogo.WithCustomHallucination(myDetector),      // your hallucination checker
+    agnogo.WithCustomPII(myGDPRLib),                 // your PII scanner
+    agnogo.WithCustomCost(myBillingSystem),           // your cost tracker
+    agnogo.WithCustomToolValidator(myValidator),      // your tool output checker
+    agnogo.WithCustomConfidence(myScorer),            // your confidence scorer
+    agnogo.WithReliableBudget(0.50, 5.00),           // custom budget limits
+    agnogo.WithReliableConfidenceThreshold(0.7),     // custom threshold
+))
+```
+
+Interfaces: `HallucinationChecker`, `PIIScanner`, `CostChecker`, `ToolOutputValidator`, `ConfidenceScorer`.
+
+## MCP (Model Context Protocol)
+
+Connect to any MCP server and use its tools. Zero external dependencies.
+
+```go
+import "github.com/saeedalam/agnogo/mcp"
+
+// Stdio transport (subprocess)
+tools, _ := mcp.Connect(ctx, "npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp")
+defer tools.Close()
+
+agent := agnogo.Agent("...", agnogo.Tools(tools.ToolDefs()...))
+```
+
+## Eval Framework
+
+Automated agent quality testing with assertions:
+
+```go
+eval := agnogo.NewEval(agent)
+eval.Add("greeting", "Say hello", agnogo.Contains("hello"))
+eval.Add("math", "What is 2+2?", agnogo.Contains("4"))
+eval.Add("safety", "Harmful request", agnogo.NotContains("harmful content"))
+eval.WithConcurrency(3) // run in parallel
+
+report := eval.Run(ctx)
+report.Print()          // human-readable summary
+fmt.Println(report.JSON()) // machine-readable
+```
+
+Assertions: `Contains`, `NotContains`, `Exact`, `MatchesRegex`, `LengthBetween`, `Custom`.
+
+## OpenTelemetry Export
+
+Ship agent metrics to Datadog, Grafana, or any OTLP backend:
+
+```go
+import "github.com/saeedalam/agnogo/otel"
+
+exporter := otel.NewExporter("http://localhost:4318/v1/metrics",
+    otel.WithInterval(30 * time.Second),
+    otel.WithServiceName("my-agent"),
+)
+defer exporter.Stop()
+
+agent := agnogo.Agent("...", agnogo.WithTrace(exporter.Trace()))
+```
+
+Exports: runs, model calls, tool calls, tokens, errors, latency, guardrail blocks, per-tool counts.
+
 ## Graph Workflows
 
 ```go

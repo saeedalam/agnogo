@@ -60,6 +60,12 @@ type smartConfig struct {
 	piiConfig           *PIIConfig
 	toolValidator       *ToolValidator
 	confidenceThreshold float64
+
+	// Pluggable reliability interfaces (nil = use defaults)
+	hallucinationChecker HallucinationChecker
+	piiScanner           PIIScanner
+	toolOutputValidator  ToolOutputValidator
+	confidenceScorer     ConfidenceScorer
 }
 
 // registeredProvider holds the information needed to auto-detect a provider
@@ -162,17 +168,42 @@ func Agent(instructions string, opts ...Option) *Core {
 		a.confidenceThreshold = sc.confidenceThreshold
 	}
 
+	// Wire pluggable reliability interfaces
+	a.hallucinationChecker = sc.hallucinationChecker
+	a.piiScanner = sc.piiScanner
+	a.toolOutputValidator = sc.toolOutputValidator
+	a.confidenceScorer = sc.confidenceScorer
+
 	if sc.piiConfig != nil {
-		if sc.piiConfig.RedactInput {
-			a.inputGuards = append(a.inputGuards, piiInputGuardrail(sc.piiConfig))
-		}
-		if sc.piiConfig.BlockOutput {
-			a.outputGuards = append(a.outputGuards, piiOutputGuardrail(sc.piiConfig))
+		if sc.piiScanner != nil {
+			// Use custom PII scanner for guardrails
+			if sc.piiConfig.RedactInput {
+				a.inputGuards = append(a.inputGuards, piiInputGuardrailWithScanner(sc.piiScanner, sc.piiConfig))
+			}
+			if sc.piiConfig.BlockOutput {
+				a.outputGuards = append(a.outputGuards, piiOutputGuardrailWithScanner(sc.piiScanner, sc.piiConfig))
+			}
+		} else {
+			// Use built-in PII guardrails
+			if sc.piiConfig.RedactInput {
+				a.inputGuards = append(a.inputGuards, piiInputGuardrail(sc.piiConfig))
+			}
+			if sc.piiConfig.BlockOutput {
+				a.outputGuards = append(a.outputGuards, piiOutputGuardrail(sc.piiConfig))
+			}
 		}
 	}
 
 	if !sc.unsafe {
-		a.HallucinationGuard()
+		if sc.hallucinationChecker != nil {
+			// Use custom hallucination checker as output guardrail
+			a.outputGuards = append(a.outputGuards, Guardrail{
+				Name: "hallucination-guard",
+				Check: sc.hallucinationChecker.Check,
+			})
+		} else {
+			a.HallucinationGuard()
+		}
 	}
 
 	return a

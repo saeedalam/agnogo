@@ -50,6 +50,12 @@ type Core struct {
 	costBudget          *CostBudget
 	toolValidator       *ToolValidator
 	confidenceThreshold float64
+
+	// Pluggable reliability interfaces (nil = use defaults)
+	hallucinationChecker HallucinationChecker
+	piiScanner           PIIScanner
+	toolOutputValidator  ToolOutputValidator
+	confidenceScorer     ConfidenceScorer
 }
 
 // Config configures a new Core.
@@ -450,6 +456,22 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 			}
 
 			toolsCalled = append(toolsCalled, tc.Name)
+
+			// Tool output validation (custom or built-in)
+			if a.toolOutputValidator != nil {
+				if validated, verr := a.toolOutputValidator.Validate(tc.Name, result); verr != nil {
+					result = fmt.Sprintf("Tool '%s' output rejected: %s", tc.Name, verr.Error())
+				} else {
+					result = validated
+				}
+			} else if a.toolValidator != nil {
+				if validated, verr := a.toolValidator.validateToolOutput(tc.Name, result); verr != nil {
+					result = fmt.Sprintf("Tool '%s' output rejected: %s", tc.Name, verr.Error())
+				} else {
+					result = validated
+				}
+			}
+
 			messages = append(messages, Message{Role: "tool", Content: result, Name: tc.ID})
 			session.AddToolResult(tc.ID, result)
 		}
