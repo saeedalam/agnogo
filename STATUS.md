@@ -283,6 +283,18 @@ These features exist only in agnogo and have no equivalent in the Python Agno li
 | `mcp.Connect()` | MCP Protocol integration (stdio transport, zero dependencies) |
 | `otel.NewExporter()` | OpenTelemetry OTLP export (runs, tokens, errors, latency) |
 | `NewEval()` | Agent evaluation framework with assertions and parallel runs |
+| `NewWorkflowEngine()` | Structured workflow with StepRunner, data flow, HITL, error modes |
+| `WfStep/WfFunc/WfSequence/WfParallel/WfLoop/WfCondition/WfRoute` | Composable step types with nesting |
+| `ErrWorkflowPaused` / `ResumeWorkflow()` | Human-in-the-loop pause/resume for workflows |
+| `Image` / `Audio` / `File` | Multi-modal types with URL/Path/Bytes + MIME auto-detection |
+| `AddMediaMessage()` | Attach images/audio/files to session messages |
+| `NativeReasoner` interface | Provider-specific reasoning (O1/O3, Claude thinking, DeepSeek-R1) |
+| `NextAction` enum | Reasoning control flow: continue, validate, final_answer, reset |
+| `Response.ReasoningSteps` | Chain-of-thought steps persisted in response |
+| `LearningMachine` | Self-improving agents with multiple learning stores |
+| `UserProfileStore` | Structured user facts with incremental merge |
+| `SessionContextStore` | Session summaries (decisions, outcomes, topics) |
+| `EntityMemoryStore` | External entity knowledge with fact/event deduplication |
 | 19 utility tools | regex, base64, hash, uuid, time, env, template, yaml, xml, diff, archive, crypto, dns, tcp, markdown, pdf, image, cron, semver, metrics |
 
 ---
@@ -303,12 +315,12 @@ These features exist only in agnogo and have no equivalent in the Python Agno li
 | Storage | 13 | 5 | 38% |
 | Built-in tools | 129 | 35 | 27% |
 | Debug/Observability | 7 | 7 | 100% |
-| Go-exclusive features | 0 | 45 | -- |
-| Tests | | 243+ | |
-| Core framework | | | ~95% |
-| Including integrations | | | ~48% |
+| Go-exclusive features | 0 | 58 | -- |
+| Tests | | 370+ | |
+| Core framework | | | ~98% |
+| Including integrations | | | ~50% |
 
-The core agent framework is at ~95% parity. The gap is mainly integrations (providers, vector DBs, tools) which are additive and can be contributed incrementally. agnogo includes 45 Go-exclusive features — reliability layer (cost management, PII/GDPR, state machine, confidence scoring, semantic hallucination detection), performance features (concurrent tool execution, async post-processing), graph orchestration (function nodes), MCP protocol, OpenTelemetry export, eval framework, plus all the original Go-native patterns (pipelines, resilience, observability, HTTP serving, batch processing, structured errors).
+The core agent framework is at ~98% parity with Agno Python. agnogo includes 58 Go-exclusive features spanning reliability (cost/PII/hallucination/confidence), performance (concurrent tools, async post-processing), graph orchestration, structured workflow engine with HITL, multi-modal support, advanced reasoning (native + CoT), self-improving learning machine, MCP protocol, OpenTelemetry export, eval framework, plus Go-native patterns (pipelines, resilience, observability, HTTP serving, batch processing, structured errors).
 
 ---
 
@@ -321,6 +333,44 @@ The core agent framework is at ~95% parity. The gap is mainly integrations (prov
 5. **MongoDB storage** -- popular NoSQL backend
 6. **Azure OpenAI provider** -- enterprise customers
 7. **A/B testing** -- traffic splitting for prompts/models
+
+## Completed in v1.0.0
+
+- Learning Machine (`LearningMachine`, `LearningStore` interface)
+- `UserProfileStore`: structured user facts with incremental merge
+- `SessionContextStore`: session summaries (summary, decisions, outcomes, topics)
+- `EntityMemoryStore`: external entity knowledge with fact/event deduplication
+- Context injection before model calls, extraction after responses
+- `WithLearning(lm)` option for `Agent()` constructor
+
+## Completed in v0.9.0
+
+- Advanced reasoning: `ReasoningAuto`, `ReasoningCoT`, `ReasoningNative` modes
+- `NativeReasoner` interface for providers with built-in thinking
+- `extractThinking()` for `<think>`/`<thinking>` tag parsing
+- `NextAction` enum: `continue`, `validate`, `final_answer`, `reset`
+- `Response.ReasoningSteps` — chain-of-thought steps persisted in response
+- `WithReasoningConfig()` option with parameterized CoT prompt
+- Session history included in reasoning context
+
+## Completed in v0.8.0
+
+- Multi-modal: `Image`, `Audio`, `File` types with URL/Path/Bytes sources
+- Constructors: `ImageFromURL`, `ImageFromFile`, `ImageFromBytes`, `AudioFromFile`, `FileFromPath`
+- MIME detection from magic bytes (JPEG, PNG, GIF, WebP, PDF)
+- Provider formatting: OpenAI (image_url), Anthropic (base64 blocks), Gemini (inline_data)
+- `Session.AddMediaMessage()` + `Run(ctx, session, "")` for media messages
+- HTTP timeout (30s), status code check, Content-Type charset stripping
+
+## Completed in v0.7.0
+
+- Workflow engine: `StepRunner` interface, `WorkflowEngine`, `StepInput`/`StepOutput`
+- Step types: `AgentStep`, `FuncStep`, `Steps`, `ParallelSteps`, `LoopStep`, `ConditionStep`, `RouterStep`
+- Error handling: `OnErrorFail`, `OnErrorSkip`, `OnErrorPause`
+- HITL: `RequiresConfirmation`, `ErrWorkflowPaused`, `ResumeWorkflow()`
+- Retry: `MaxRetries`, `RetryDelay`
+- `WorkflowAdapter` for backward compatibility with existing `Workflow` types
+- Convenience constructors: `WfStep`, `WfFunc`, `WfSequence`, `WfParallel`, `WfLoop`, `WfCondition`, `WfRoute`
 
 ## Completed in v0.6.0
 

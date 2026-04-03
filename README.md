@@ -515,6 +515,64 @@ g.AddFuncNode("transform", func(ctx context.Context, state *agnogo.GraphState) e
 })
 ```
 
+## Workflow Engine
+
+Structured workflow with data flow, error handling, HITL pause/resume, and composable nesting:
+
+```go
+wf := agnogo.NewWorkflowEngine("pipeline",
+    agnogo.WfSequence("main",
+        agnogo.WfStep("extract", extractAgent),
+        agnogo.WfFunc("validate", validateFn),          // pure Go function step
+        agnogo.WfParallel("research", webStep, dbStep),  // concurrent steps
+        agnogo.WfCondition("route", evalFn, rushStep, normalStep),
+        agnogo.WfStep("confirm", confirmAgent).WithConfirmation(), // HITL pause
+    ),
+)
+output, _ := wf.RunWorkflow(ctx, session, "Process order")
+```
+
+Step types: `WfStep`, `WfFunc`, `WfSequence`, `WfParallel`, `WfLoop`, `WfCondition`, `WfRoute`. Error modes: `OnErrorFail`, `OnErrorSkip`, `OnErrorPause`. Retries, SkipIf, RequiresConfirmation.
+
+## Multi-Modal
+
+Images, audio, and files for all providers (OpenAI, Anthropic, Gemini):
+
+```go
+session.AddMediaMessage("user", "What's in this?",
+    []agnogo.Image{agnogo.ImageFromURL("https://example.com/photo.jpg")}, nil, nil)
+resp, _ := agent.Run(ctx, session, "")
+```
+
+Constructors: `ImageFromURL`, `ImageFromFile`, `ImageFromBytes`, `AudioFromFile`, `FileFromPath`. MIME auto-detection from magic bytes.
+
+## Advanced Reasoning
+
+Three modes — auto-detect native models (O1/O3, Claude thinking), forced CoT, or dedicated model:
+
+```go
+agent := agnogo.Agent("...", agnogo.Reasoning)                       // default CoT
+agent := agnogo.Agent("...", agnogo.WithReasoningConfig(agnogo.ReasoningConfig{
+    Enabled: true, Mode: agnogo.ReasoningNative, MaxSteps: 10,
+}))
+```
+
+Reasoning steps persisted in `resp.ReasoningSteps`. NextAction control: `continue`, `validate`, `final_answer`, `reset`.
+
+## Learning Machine
+
+Self-improving agents that learn from conversations:
+
+```go
+lm := agnogo.NewLearningMachine(model)
+lm.AddStore(agnogo.NewUserProfileStore())       // name, email, company, preferences
+lm.AddStore(agnogo.NewSessionContextStore())     // summary, decisions, outcomes
+lm.AddStore(agnogo.NewEntityMemoryStore())       // people, companies, projects
+agent := agnogo.Agent("...", agnogo.WithLearning(lm))
+```
+
+Recalls context before each run, extracts learnings after. Profile merges incrementally. Entity facts deduplicated.
+
 ## Run Context (Dependency Injection)
 
 ```go
@@ -580,6 +638,11 @@ agnogo/
   statemachine.go      Agent state machine + checkpoints
   toolvalidate.go      Tool output validation (size, format, JSON)
   graph.go             Graph workflows + function nodes
+  wfengine.go          Workflow engine v2 (StepRunner, StepInput/Output, HITL)
+  wfsteps.go           AgentStep, FuncStep, Steps, ParallelSteps, LoopStep, etc.
+  media.go             Multi-modal (Image, Audio, File) + MIME detection
+  reasoning.go         Advanced reasoning (native, CoT, NextAction)
+  learn.go             Learning Machine (UserProfile, SessionContext, EntityMemory)
   eval.go              Agent evaluation framework
   runctx.go            RunContext dependency injection
   events.go            EventBus pub/sub

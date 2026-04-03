@@ -57,6 +57,42 @@ Every agent framework focuses on features. agnogo focuses on **reliability** —
 - Graph function nodes: `AddFuncNode()` for pure Go data processing between LLM steps
 - Consistency checking between runs
 
+### v0.7.0 — Workflow Engine
+- Structured workflow engine with `StepRunner` interface and composable step types
+- Step types: `AgentStep`, `FuncStep`, `Steps` (sequential), `ParallelSteps`, `LoopStep`, `ConditionStep`, `RouterStep`
+- Structured data flow via `StepInput.PrevOutputs` — access any previous step's output by name
+- Error handling modes: `OnErrorFail`, `OnErrorSkip`, `OnErrorPause`
+- HITL pause/resume: `RequiresConfirmation`, `ErrWorkflowPaused`, `ResumeWorkflow()`
+- Retry with configurable `MaxRetries` and `RetryDelay`
+- `WorkflowAdapter` bridges existing `Workflow` types into new engine
+- `WorkflowEngine` implements existing `Workflow` interface (backward compatible)
+
+### v0.8.0 — Multi-Modal Support
+- `Image`, `Audio`, `File` types with `URL`, `Path`, `Content` (bytes) sources
+- Constructors: `ImageFromURL`, `ImageFromFile`, `ImageFromBytes`, `AudioFromFile`, `FileFromPath`
+- MIME detection from magic bytes (JPEG, PNG, GIF, WebP, PDF) — zero dependencies
+- Provider formatting: OpenAI (image_url), Anthropic (base64 image blocks), Gemini (inline_data)
+- `Session.AddMediaMessage()` for attaching media to messages
+- `Message.Images`, `Message.Audio`, `Message.Files` fields (backward compatible)
+
+### v0.9.0 — Advanced Reasoning
+- Three modes: `ReasoningAuto` (detect native), `ReasoningCoT` (force chain-of-thought), `ReasoningNative` (force native)
+- `NativeReasoner` interface for providers with built-in thinking (O1/O3, Claude, DeepSeek-R1)
+- `extractThinking()` parses `<think>`/`<thinking>` tags from native model output
+- `NextAction` enum: `continue`, `validate`, `final_answer`, `reset`
+- Parameterized CoT prompt with min/max steps and validation instructions
+- `Response.ReasoningSteps` — steps persisted in response for analytics/UI
+- Session history included in reasoning context for multi-turn conversations
+
+### v1.0.0 — Learning Machine
+- `LearningMachine` coordinates multiple `LearningStore` implementations
+- `UserProfileStore`: structured user facts (name, email, company, preferences) with incremental merge
+- `SessionContextStore`: session summaries (summary, decisions, outcomes, topics)
+- `EntityMemoryStore`: external entities (people, companies, projects) with fact/event deduplication
+- Context injection before each model call (recalls from all stores)
+- Learning extraction after each response (processes conversation through all stores)
+- `WithLearning(lm)` option for `Agent()` constructor
+
 ## What's Next
 
 ### Future
@@ -64,9 +100,8 @@ Every agent framework focuses on features. agnogo focuses on **reliability** —
 - **A/B testing** — test different prompts/models with traffic splitting
 - **Graph time-travel** — state snapshots + resume from any node
 - **Graph map-reduce** — scatter-gather pattern for parallel agent instances
-- **Graph human-in-the-loop** — approval edges with suspend/resume
-- **Multi-turn planning** — agent plans multiple steps before executing
 - **Long-term memory** — cross-session memory with embedding search
+- **Semantic knowledge search** — vector embeddings for learned knowledge retrieval
 
 ## Philosophy
 

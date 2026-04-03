@@ -1225,3 +1225,274 @@ Function nodes:
 - Can set any state keys for conditional edge routing
 - Execute without an LLM call — zero latency, zero cost
 - Panic on `nil` fn (consistent with `New()` panicking on nil Model)
+
+---
+
+## Workflow Engine
+
+The workflow engine provides structured data flow, error handling modes, HITL pause/resume, and composable step nesting. It's a superset of the existing `Sequential`/`Parallel`/`Loop`/`Condition`/`Route` types.
+
+### Step Types
+
+```go
+wf := agnogo.NewWorkflowEngine("order-pipeline",
+    agnogo.WfSequence("main",
+        agnogo.WfStep("extract", extractAgent),                    // LLM agent
+        agnogo.WfFunc("validate", validateFn),                     // pure Go function
+        agnogo.WfCondition("route",                                // branching
+            func(ctx context.Context, in *agnogo.StepInput) bool {
+                return strings.Contains(in.PrevContent, "urgent")
+            },
+            agnogo.WfStep("rush", rushAgent),
+            agnogo.WfStep("normal", normalAgent),
+        ),
+        agnogo.WfParallel("research",                              // concurrent
+            agnogo.WfStep("web", webAgent),
+            agnogo.WfStep("db", dbAgent),
+        ),
+        agnogo.WfLoop("refine", refineStep, func(out *agnogo.StepOutput, i int) bool {
+            return out.Confidence > 0.9 || i >= 3                  // iteration
+        }),
+        agnogo.WfRoute("dispatch", selectorFn, routes),            // dynamic routing
+    ),
+)
+
+output, err := wf.RunWorkflow(ctx, session, "Process order #456")
+```
+
+All step types:
+- `WfStep` — wraps a `*Core` agent with retry, OnError, SkipIf, RequiresConfirmation
+- `WfFunc` — pure Go function for validation, transformation, API calls
+- `WfSequence` — sequential composition with accumulated `PrevOutputs` data flow
+- `WfParallel` — concurrent execution with session cloning and customizable merge
+- `WfLoop` — iteration with stop condition and max iterations
+- `WfCondition` — if/else branching based on a Go function
+- `WfRoute` — dynamic route selection with fallback
+
+### Structured Data Flow
+
+Each step receives a `StepInput` with access to ALL previous step outputs by name:
+
+```go
+agnogo.WfFunc("analyze", func(ctx context.Context, input *agnogo.StepInput) (*agnogo.StepOutput, error) {
+    // Access any previous step's output by name
+    extracted := input.GetOutput("extract")
+    webData := input.GetOutput("web")      // even from nested parallel steps
+
+    // Access the immediately previous step's content
+    prev := input.PrevContent
+
+    return &agnogo.StepOutput{Content: result, Success: true}, nil
+})
+```
+
+### Error Handling
+
+Three modes per step:
+
+```go
+agnogo.WfFunc("risky", riskyFn).WithOnError(agnogo.OnErrorSkip)   // skip on failure
+agnogo.WfFunc("critical", fn).WithOnError(agnogo.OnErrorPause)     // pause for human
+agnogo.WfFunc("flaky", fn).WithRetries(3)                          // retry up to 3 times
+```
+
+- `OnErrorFail` (default) — propagate error, stop workflow
+- `OnErrorSkip` — skip failed step, continue with next
+- `OnErrorPause` — pause workflow, return `ErrWorkflowPaused` for human intervention
+
+### Human-in-the-Loop (HITL)
+
+Steps can require human confirmation before executing:
+
+```go
+wf := agnogo.NewWorkflowEngine("approval-flow",
+    agnogo.WfSequence("main",
+        agnogo.WfStep("draft", draftAgent),
+        agnogo.WfStep("publish", publishAgent).WithConfirmation(), // pauses here
+    ),
+)
+
+output, err := wf.RunWorkflow(ctx, session, "Write a blog post")
+
+var paused *agnogo.ErrWorkflowPaused
+if errors.As(err, &paused) {
+    // Show paused state to human, get approval
+    output, err = wf.ResumeWorkflow(ctx, session, paused.Paused, true, "")
+}
+```
+
+### Backward Compatibility
+
+- `WorkflowEngine` implements the existing `Workflow` interface
+- `AdaptWorkflow` wraps existing `Sequential`/`Parallel`/etc. as steps in the new engine
+- Existing workflow code continues to work unchanged
+
+---
+
+## Multi-Modal Support
+
+Images, audio, and files can be attached to messages for multi-modal LLM processing. Works with OpenAI, Anthropic, and Gemini.
+
+### Images
+
+```go
+// From URL (no download — sent as reference)
+img := agnogo.ImageFromURL("https://example.com/photo.jpg")
+
+// From file (read + base64 encode)
+img := agnogo.ImageFromFile("/path/to/photo.png")
+
+// From bytes (raw content)
+img := agnogo.ImageFromBytes(jpegData, "image/jpeg")
+
+// With detail level (OpenAI-specific)
+img := agnogo.Image{URL: "https://...", Detail: "high"}
+```
+
+### Sending Images to an Agent
+
+```go
+session := agnogo.NewSession("vision-test")
+session.AddMediaMessage("user", "What's in this image?",
+    []agnogo.Image{agnogo.ImageFromURL("https://example.com/photo.jpg")},
+    nil, nil, // audio, files
+)
+resp, _ := agent.Run(ctx, session, "") // empty userMessage = use media message from history
+```
+
+### Audio and Files
+
+```go
+audio := agnogo.AudioFromFile("/path/to/recording.wav")
+doc := agnogo.FileFromPath("/path/to/report.pdf")
+```
+
+### Provider Formatting
+
+Each provider formats multi-modal content differently — agnogo handles it automatically:
+- **OpenAI**: content array with `image_url` objects (URL or base64 data URI)
+- **Anthropic**: content array with `image` blocks (base64 source + media_type)
+- **Gemini**: parts array with `inline_data` (base64 + mime_type)
+
+MIME types are auto-detected from magic bytes (JPEG, PNG, GIF, WebP, PDF) or file extensions.
+
+---
+
+## Advanced Reasoning
+
+Three reasoning modes for step-by-step thinking before the agent responds:
+
+### Default Chain-of-Thought
+
+Works with any model. Multi-step structured reasoning with JSON output:
+
+```go
+agent := agnogo.Agent("...", agnogo.Reasoning) // simple flag
+```
+
+### Native Reasoning
+
+For models with built-in thinking (O1/O3, Claude extended thinking, DeepSeek-R1). The model handles reasoning internally — agnogo extracts the thinking output:
+
+```go
+agent := agnogo.Agent("...", agnogo.WithReasoningConfig(agnogo.ReasoningConfig{
+    Enabled: true,
+    Mode:    agnogo.ReasoningNative,
+}))
+```
+
+Providers implement the `NativeReasoner` interface to support this. Thinking content in `<think>`/`<thinking>` tags is automatically extracted.
+
+### Custom Configuration
+
+```go
+agent := agnogo.Agent("...", agnogo.WithReasoningConfig(agnogo.ReasoningConfig{
+    Enabled:  true,
+    Mode:     agnogo.ReasoningAuto, // auto-detect native vs CoT
+    Model:    strongerModel,        // use a separate model for reasoning
+    MinSteps: 3,
+    MaxSteps: 10,
+}))
+```
+
+### Reasoning Steps in Response
+
+Reasoning steps are persisted in the `Response` for analytics and UI rendering:
+
+```go
+resp, _ := agent.Run(ctx, session, "Complex question")
+for _, step := range resp.ReasoningSteps {
+    fmt.Printf("[%s] %s (confidence: %.0f%%)\n", step.Title, step.Result, step.Confidence*100)
+}
+```
+
+### NextAction Control Flow
+
+Steps use `NextAction` to control the reasoning flow:
+- `continue` — proceed to next step
+- `validate` — cross-verify the solution
+- `final_answer` — reasoning complete
+- `reset` — restart reasoning (error recovery)
+
+---
+
+## Learning Machine
+
+Self-improving agents that learn from conversations. The `LearningMachine` coordinates multiple stores that extract, persist, and recall different types of knowledge.
+
+### Setup
+
+```go
+lm := agnogo.NewLearningMachine(model)
+lm.AddStore(agnogo.NewUserProfileStore())
+lm.AddStore(agnogo.NewSessionContextStore())
+lm.AddStore(agnogo.NewEntityMemoryStore())
+
+agent := agnogo.Agent("...", agnogo.WithLearning(lm))
+```
+
+### How It Works
+
+1. **Before each Run()**: the machine recalls knowledge from all stores and injects it into the system prompt
+2. **After each Run()**: it extracts new learnings from the conversation and persists them to the session
+3. **Over time**: the agent builds up a knowledge base about users, entities, and session context
+
+### Store Types
+
+**UserProfileStore** — structured user facts (name, email, company, role, preferences):
+```go
+// Automatically extracted from conversation:
+// "Hi, I'm Alice from Acme Corp, I work as an engineer in Stockholm"
+// → UserProfile{Name: "Alice", Company: "Acme Corp", Role: "engineer", Location: "Stockholm"}
+```
+
+Profile fields merge incrementally — new extractions add to the existing profile without overwriting known fields.
+
+**SessionContextStore** — what happened in this session:
+```go
+// Automatically summarized: summary, decisions, outcomes, topics
+// Skips conversations shorter than 3 messages
+```
+
+**EntityMemoryStore** — knowledge about external entities (people, companies, projects):
+```go
+// Extracts structured entity data:
+// EntityMemory{
+//     EntityID: "acme_corp", EntityType: "company",
+//     Facts: ["Founded in 2020", "Based in Stockholm"],
+//     Events: ["Raised Series A in 2023"],
+// }
+```
+
+Facts and events are deduplicated on merge. Multiple conversations about the same entity build up a rich knowledge graph.
+
+### Custom Stores
+
+Implement the `LearningStore` interface to create your own:
+
+```go
+type LearningStore interface {
+    Type() string
+    Recall(ctx context.Context, session *Session) string
+    Process(ctx context.Context, model ModelProvider, session *Session, messages []Message)
+}
