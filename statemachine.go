@@ -3,6 +3,7 @@ package agnogo
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -24,10 +25,10 @@ const (
 // validTransitions defines the allowed state transitions.
 var validTransitions = map[AgentState][]AgentState{
 	StateIdle:            {StateProcessing},
-	StateProcessing:      {StateCallingModel, StateError, StateComplete},
-	StateCallingModel:    {StateProcessing, StateCallingTool, StateError},
+	StateProcessing:      {StateCallingModel, StateError, StateBudgetExceeded, StateComplete},
+	StateCallingModel:    {StateProcessing, StateCallingTool, StateError, StateBudgetExceeded},
 	StateCallingTool:     {StateProcessing, StateWaitingApproval, StateError},
-	StateWaitingApproval: {StateCallingTool, StateComplete},
+	StateWaitingApproval: {StateCallingTool, StateError, StateComplete},
 	StateError:           {StateIdle, StateComplete},
 	StateBudgetExceeded:  {StateComplete},
 }
@@ -134,9 +135,11 @@ func SaveCheckpoint(session *Session, state AgentState, messages []Message, cost
 		Timestamp: time.Now(),
 	}
 	data, err := json.Marshal(cp)
-	if err == nil {
-		session.Set("_checkpoint", string(data))
+	if err != nil {
+		slog.Error("agnogo: failed to marshal checkpoint", "error", err, "session", session.ID)
+		return cp
 	}
+	session.Set("_checkpoint", string(data))
 	return cp
 }
 

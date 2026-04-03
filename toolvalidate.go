@@ -32,7 +32,7 @@ func (v *ToolValidator) validateToolOutput(toolName, result string) (string, err
 
 	if v.JSONValidate && looksLikeJSON(result) {
 		if !json.Valid([]byte(result)) {
-			return result, fmt.Errorf("agnogo: tool %q returned invalid JSON", toolName)
+			return "", fmt.Errorf("agnogo: tool %q returned invalid JSON", toolName)
 		}
 	}
 

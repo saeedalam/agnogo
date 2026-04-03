@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -82,9 +83,17 @@ func (h *HybridHallucinationChecker) Check(ctx context.Context, session *Session
 
 	if len(toolOutputs) == 0 {
 		// No tools called → use regex detection (existing approach).
+		// Compile extra patterns if provided.
+		var extra []*regexp.Regexp
+		for _, p := range h.ExtraPatterns {
+			if re, err := regexp.Compile("(?i)" + p); err == nil {
+				extra = append(extra, re)
+			}
+		}
 		detector := &hallucinationDetector{
-			tools:    session.toolRegistry(),
-			patterns: getDefaultPatterns(),
+			tools:         NewToolRegistry(), // empty — regex detector uses registered tools for relevance matching
+			patterns:      getDefaultPatterns(),
+			extraPatterns: extra,
 		}
 		return detector.check(ctx, session, response)
 	}
@@ -210,10 +219,6 @@ func extractToolOutputs(session *Session) []string {
 	return outputs
 }
 
-// toolRegistry returns the tool registry from session metadata, if available.
-func (s *Session) toolRegistry() *ToolRegistry {
-	return NewToolRegistry() // empty — regex detector uses this for tool matching
-}
 
 // isStopWord filters common English stopwords to improve TF-IDF quality.
 func isStopWord(w string) bool {

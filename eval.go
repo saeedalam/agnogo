@@ -77,10 +77,10 @@ func LengthBetween(min, max int) Assertion {
 }
 
 // UsedTool checks that a specific tool was called during the response.
-// This assertion ignores the response text — it's checked via EvalResult.ToolsCalled.
+// This is a marker assertion — it always passes when checked as text.
+// Use AddWithTools() or set EvalCase.toolChecks to verify tool usage.
 func UsedTool(toolName string) Assertion {
 	return func(_ string) error {
-		// This is a marker assertion — actual checking happens in runCase.
 		return nil
 	}
 }
@@ -117,16 +117,22 @@ func NewEval(agent *Core) *Eval {
 
 // Add adds a test case with one or more assertions.
 func (e *Eval) Add(name, input string, assertions ...Assertion) *Eval {
-	ec := EvalCase{
+	e.cases = append(e.cases, EvalCase{
 		Name:       name,
 		Input:      input,
 		Assertions: assertions,
-	}
-	// Extract tool checks from UsedTool assertions.
-	for range assertions {
-		// UsedTool detection is handled at assertion level.
-	}
-	e.cases = append(e.cases, ec)
+	})
+	return e
+}
+
+// AddWithTools adds a test case that also verifies specific tools were called.
+func (e *Eval) AddWithTools(name, input string, expectedTools []string, assertions ...Assertion) *Eval {
+	e.cases = append(e.cases, EvalCase{
+		Name:       name,
+		Input:      input,
+		Assertions: assertions,
+		toolChecks: expectedTools,
+	})
 	return e
 }
 
@@ -284,7 +290,11 @@ func (r *EvalReport) Print() {
 }
 
 // JSON returns the report as formatted JSON.
+// Returns "{}" if marshaling fails.
 func (r *EvalReport) JSON() string {
-	data, _ := json.MarshalIndent(r, "", "  ")
+	data, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return "{}"
+	}
 	return string(data)
 }
