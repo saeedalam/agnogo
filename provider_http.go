@@ -29,10 +29,35 @@ func newHTTPClient(timeout time.Duration) *http.Client {
 // ─── OpenAI-compatible chat completion ─────────────────────
 
 // formatOpenAIMessages converts agnogo Messages to the OpenAI API format.
+// When a message has Images or Audio, content becomes an array of content parts.
 func formatOpenAIMessages(messages []Message) []map[string]any {
 	oaiMsgs := make([]map[string]any, 0, len(messages))
 	for _, m := range messages {
-		msg := map[string]any{"role": m.Role, "content": m.Content}
+		msg := map[string]any{"role": m.Role}
+
+		// Multi-modal: convert content to array format
+		if len(m.Images) > 0 || len(m.Audio) > 0 {
+			parts := []map[string]any{}
+			if m.Content != "" {
+				parts = append(parts, map[string]any{"type": "text", "text": m.Content})
+			}
+			for _, img := range m.Images {
+				part := formatOpenAIImage(img)
+				if part != nil {
+					parts = append(parts, part)
+				}
+			}
+			for _, aud := range m.Audio {
+				part := formatOpenAIAudio(aud)
+				if part != nil {
+					parts = append(parts, part)
+				}
+			}
+			msg["content"] = parts
+		} else {
+			msg["content"] = m.Content
+		}
+
 		if m.Name != "" && m.Role == "tool" {
 			msg["tool_call_id"] = m.Name
 		}
@@ -45,13 +70,56 @@ func formatOpenAIMessages(messages []Message) []map[string]any {
 				}
 			}
 			msg["tool_calls"] = calls
-			if m.Content == "" {
+			if m.Content == "" && len(m.Images) == 0 {
 				delete(msg, "content")
 			}
 		}
 		oaiMsgs = append(oaiMsgs, msg)
 	}
 	return oaiMsgs
+}
+
+// formatOpenAIImage formats an Image for the OpenAI API.
+func formatOpenAIImage(img Image) map[string]any {
+	// Direct URL reference (no download needed)
+	if img.URL != "" && img.Path == "" && img.Content == nil {
+		imageURL := map[string]any{"url": img.URL}
+		if img.Detail != "" {
+			imageURL["detail"] = img.Detail
+		}
+		return map[string]any{"type": "image_url", "image_url": imageURL}
+	}
+
+	// Base64-encoded (from file or bytes)
+	b64, mime, err := encodeMediaBase64(img.URL, img.Path, img.Content, img.MimeType)
+	if err != nil {
+		return nil
+	}
+	dataURI := fmt.Sprintf("data:%s;base64,%s", mime, b64)
+	imageURL := map[string]any{"url": dataURI}
+	if img.Detail != "" {
+		imageURL["detail"] = img.Detail
+	}
+	return map[string]any{"type": "image_url", "image_url": imageURL}
+}
+
+// formatOpenAIAudio formats an Audio for the OpenAI API.
+func formatOpenAIAudio(aud Audio) map[string]any {
+	b64, _, err := encodeMediaBase64(aud.URL, aud.Path, aud.Content, aud.MimeType)
+	if err != nil {
+		return nil
+	}
+	format := aud.Format
+	if format == "" {
+		format = "wav"
+	}
+	return map[string]any{
+		"type": "input_audio",
+		"input_audio": map[string]any{
+			"data":   b64,
+			"format": format,
+		},
+	}
 }
 
 // parseOpenAIResponse parses the OpenAI-format JSON response into a ModelResponse.
@@ -262,7 +330,7 @@ func formatAnthropicRequest(model string, cfg ModelConfig, messages []Message, t
 			systemPrompt += m.Content + "\n"
 			continue
 		}
-		msg := map[string]any{"role": m.Role, "content": m.Content}
+		var msg map[string]any
 		if m.Role == "tool" {
 			msg = map[string]any{
 				"role": "user",
@@ -272,8 +340,7 @@ func formatAnthropicRequest(model string, cfg ModelConfig, messages []Message, t
 					"content":     m.Content,
 				}},
 			}
-		}
-		if len(m.ToolCalls) > 0 {
+		} else if len(m.ToolCalls) > 0 {
 			content := make([]map[string]any, len(m.ToolCalls))
 			for i, tc := range m.ToolCalls {
 				var args any
@@ -283,6 +350,43 @@ func formatAnthropicRequest(model string, cfg ModelConfig, messages []Message, t
 				}
 			}
 			msg = map[string]any{"role": "assistant", "content": content}
+		} else if len(m.Images) > 0 || len(m.Files) > 0 {
+			// Multi-modal: content array with text + image/document blocks
+			parts := []map[string]any{}
+			if m.Content != "" {
+				parts = append(parts, map[string]any{"type": "text", "text": m.Content})
+			}
+			for _, img := range m.Images {
+				b64, mime, err := encodeMediaBase64(img.URL, img.Path, img.Content, img.MimeType)
+				if err != nil {
+					continue
+				}
+				parts = append(parts, map[string]any{
+					"type": "image",
+					"source": map[string]any{
+						"type":       "base64",
+						"media_type": mime,
+						"data":       b64,
+					},
+				})
+			}
+			for _, f := range m.Files {
+				b64, mime, err := encodeMediaBase64(f.URL, f.Path, f.Content, f.MimeType)
+				if err != nil {
+					continue
+				}
+				parts = append(parts, map[string]any{
+					"type": "document",
+					"source": map[string]any{
+						"type":       "base64",
+						"media_type": mime,
+						"data":       b64,
+					},
+				})
+			}
+			msg = map[string]any{"role": m.Role, "content": parts}
+		} else {
+			msg = map[string]any{"role": m.Role, "content": m.Content}
 		}
 		apiMsgs = append(apiMsgs, msg)
 	}
@@ -553,7 +657,23 @@ func formatGeminiRequest(_ string, cfg ModelConfig, messages []Message, tools []
 			})
 			continue
 		}
-		parts := []map[string]any{{"text": m.Content}}
+		parts := []map[string]any{}
+		if m.Content != "" {
+			parts = append(parts, map[string]any{"text": m.Content})
+		}
+		// Multi-modal: add inline_data parts for images
+		for _, img := range m.Images {
+			b64, mime, err := encodeMediaBase64(img.URL, img.Path, img.Content, img.MimeType)
+			if err != nil {
+				continue
+			}
+			parts = append(parts, map[string]any{
+				"inline_data": map[string]any{
+					"mime_type": mime,
+					"data":      b64,
+				},
+			})
+		}
 		if len(m.ToolCalls) > 0 {
 			parts = nil
 			for _, tc := range m.ToolCalls {
@@ -563,6 +683,9 @@ func formatGeminiRequest(_ string, cfg ModelConfig, messages []Message, tools []
 					"functionCall": map[string]any{"name": tc.Name, "args": args},
 				})
 			}
+		}
+		if len(parts) == 0 {
+			parts = append(parts, map[string]any{"text": ""})
 		}
 		contents = append(contents, map[string]any{"role": role, "parts": parts})
 	}

@@ -25,6 +25,9 @@ type Message struct {
 	Content   string     `json:"content"`
 	Name      string     `json:"name,omitempty"`        // tool_call_id for role=tool
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`  // for role=assistant
+	Images    []Image    `json:"images,omitempty"`      // multi-modal: attached images
+	Audio     []Audio    `json:"audio,omitempty"`       // multi-modal: attached audio
+	Files     []File     `json:"files,omitempty"`       // multi-modal: attached files
 }
 
 // ToolCall records a tool invocation by the model.
@@ -60,6 +63,18 @@ func (s *Session) AddToolResult(toolCallID, result string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.History = append(s.History, Message{Role: "tool", Content: result, Name: toolCallID})
+	s.UpdatedAt = time.Now()
+}
+
+// AddMediaMessage appends a message with images, audio, and/or files to history.
+// Use with agent.Run(ctx, session, "") — empty userMessage skips adding a duplicate.
+func (s *Session) AddMediaMessage(role, content string, images []Image, audio []Audio, files []File) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.History = append(s.History, Message{
+		Role: role, Content: content,
+		Images: images, Audio: audio, Files: files,
+	})
 	s.UpdatedAt = time.Now()
 }
 

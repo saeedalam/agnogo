@@ -239,8 +239,10 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 
 	messages := []Message{{Role: "system", Content: systemPrompt}}
 	messages = append(messages, session.GetHistory()...)
-	session.AddMessage("user", userMessage)
-	messages = append(messages, Message{Role: "user", Content: userMessage})
+	if userMessage != "" {
+		session.AddMessage("user", userMessage)
+		messages = append(messages, Message{Role: "user", Content: userMessage})
+	}
 
 	// Reasoning (chain-of-thought before responding)
 	if a.reasoning != nil && a.reasoning.Enabled {
