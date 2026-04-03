@@ -179,12 +179,13 @@ func (a *Core) Tools() *ToolRegistry { return a.tools }
 
 // Response is the result of Run.
 type Response struct {
-	Text            string          `json:"text"`
-	ToolsCalled     []string        `json:"tools_called,omitempty"`
-	NeedsApproval   bool            `json:"needs_approval,omitempty"`
-	Approval        *HumanApproval  `json:"approval,omitempty"`
-	Metrics         *RunMetrics     `json:"metrics,omitempty"`
-	PostProcessDone <-chan struct{} `json:"-"` // closed when async post-processing finishes; nil if sync
+	Text            string           `json:"text"`
+	ToolsCalled     []string         `json:"tools_called,omitempty"`
+	NeedsApproval   bool             `json:"needs_approval,omitempty"`
+	Approval        *HumanApproval   `json:"approval,omitempty"`
+	Metrics         *RunMetrics      `json:"metrics,omitempty"`
+	ReasoningSteps  []ReasoningStep  `json:"reasoning_steps,omitempty"` // chain-of-thought steps (if reasoning enabled)
+	PostProcessDone <-chan struct{}  `json:"-"` // closed when async post-processing finishes; nil if sync
 }
 
 // Run processes one user message. The main method.
@@ -245,8 +246,10 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 	}
 
 	// Reasoning (chain-of-thought before responding)
+	var reasoningSteps []ReasoningStep
 	if a.reasoning != nil && a.reasoning.Enabled {
-		_, reasoningContext := runReasoning(ctx, a.reasoning, a.model, userMessage, session)
+		var reasoningContext string
+		reasoningSteps, reasoningContext = runReasoning(ctx, a.reasoning, a.model, userMessage, session)
 		if reasoningContext != "" {
 			messages = append(messages, Message{Role: "system", Content: reasoningContext})
 		}
@@ -363,7 +366,7 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 			metrics.Duration = time.Since(runStart)
 			dbg.printRunEnd(runID, metrics)
 
-			result := &Response{Text: text, ToolsCalled: toolsCalled, Metrics: metrics}
+			result := &Response{Text: text, ToolsCalled: toolsCalled, Metrics: metrics, ReasoningSteps: reasoningSteps}
 
 			postProcess := func(pctx context.Context) {
 				if a.memory != nil {
