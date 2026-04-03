@@ -919,3 +919,309 @@ data := agent.ToDict()  // map[string]any
 json, _ := agent.ToJSON() // []byte
 fmt.Println(agent.String()) // "Core{tools: [calculator, web_search], max_loops: 8}"
 ```
+
+---
+
+## Reliability Layer
+
+agnogo is the only Go agent framework with a built-in production safety layer. Enable everything with one line, or customize each component independently.
+
+### One-Line Safety
+
+```go
+agent := agnogo.Agent("...", agnogo.Reliable())
+```
+
+This enables:
+- **Cost budgets** — $1/run, $10/session (configurable)
+- **PII detection** — block PII in output, redact from stored history
+- **Hallucination guard** — pattern + semantic detection
+- **Tool validation** — reject empty, oversized, or malformed tool output
+- **Confidence scoring** — 0.0–1.0 score on every response
+
+### Cost Management
+
+Stop runaway agents from burning money. Budget enforcement happens inside the agent loop — mid-run interruption when limits are hit.
+
+```go
+agent := agnogo.Agent("...", agnogo.Reliable(
+    agnogo.WithReliableBudget(0.50, 5.00), // $0.50/run, $5/session
+))
+
+// Or standalone:
+agent := agnogo.Agent("...", agnogo.WithBudget(agnogo.CostBudget{
+    MaxPerRun:     0.50,
+    MaxPerSession: 5.00,
+    MaxPerMinute:  2.00,  // rolling rate limit
+    OnExceeded: func(spent, limit float64) {
+        alert.Send(fmt.Sprintf("Budget hit: $%.2f / $%.2f", spent, limit))
+    },
+}))
+```
+
+Budget limits:
+- `MaxPerRun` — per `Run()` call (single conversation turn)
+- `MaxPerSession` — cumulative across all turns in a session
+- `MaxPerMinute` — rolling 1-minute window (prevents burst spend)
+
+### PII Detection and GDPR Compliance
+
+Built-in regex detection for emails, phone numbers, credit cards (Luhn-validated), SSNs, and IP addresses.
+
+```go
+agent := agnogo.Agent("...", agnogo.Reliable(
+    agnogo.WithReliablePII(agnogo.PIIConfig{
+        BlockOutput:  true,                           // block PII in agent responses
+        RedactInput:  true,                           // redact PII from stored history
+        AllowedTypes: []agnogo.PIIType{agnogo.PIIEmail}, // user consented to email
+        OnDetected:   auditLog,                       // compliance callback
+    }),
+))
+```
+
+PII types: `PIIEmail`, `PIIPhone`, `PIICreditCard`, `PIISSN`, `PIIIPAddress`, `PIICustom`.
+
+Add domain-specific patterns:
+
+```go
+agnogo.PIIConfig{
+    CustomPatterns: []agnogo.PIIPattern{
+        {Type: agnogo.PIICustom, Pattern: `\bEMP-\d{6}\b`}, // employee IDs
+    },
+}
+```
+
+### Hallucination Detection
+
+Two detection modes that catch different failure classes:
+
+**Pattern-based** (default) — catches fabricated dates, times, prices, weather when no tools were called:
+
+```go
+agent.HallucinationGuard()                                      // built-in patterns
+agent.HallucinationGuardWithPatterns([]string{`\bpatient\s+\d+`}) // + custom patterns
+```
+
+Severity levels:
+- `SeverityLikely` (2+ matches, or relative-time keyword) — response blocked, automatic retry with tool instruction
+- `SeverityPossible` (single ambiguous match) — warning logged, response allowed
+
+**Semantic grounding** (TF-IDF) — catches responses that diverge from tool outputs even when tools WERE called:
+
+```go
+agent := agnogo.Agent("...", agnogo.Reliable(
+    agnogo.WithCustomHallucination(&agnogo.SemanticHallucinationChecker{
+        MinGrounding: 0.3, // minimum cosine similarity to tool outputs
+    }),
+))
+```
+
+**Hybrid** — regex when no tools called, TF-IDF when tools called:
+
+```go
+agent := agnogo.Agent("...", agnogo.Reliable(
+    agnogo.WithCustomHallucination(&agnogo.HybridHallucinationChecker{
+        MinGrounding: 0.3,
+    }),
+))
+```
+
+### Tool Output Validation
+
+Don't trust tool results blindly. Validates tool output before feeding it back to the LLM.
+
+```go
+agent := agnogo.Agent("...", agnogo.Reliable(
+    agnogo.WithReliableToolValidation(agnogo.ToolValidator{
+        MaxOutputSize:   50000, // reject output over 50KB
+        RequireNonEmpty: true,  // reject empty results
+        JSONValidate:    true,  // validate JSON is well-formed
+    }),
+))
+```
+
+### Confidence Scoring
+
+Every response gets a 0.0–1.0 confidence score based on:
+- Tool usage (+0.3 for tool-backed, +0.1 for multiple tools)
+- Hedging language ("I think", "probably", "might" → penalty)
+- Factual question detection (factual questions without tools → low confidence)
+- Response length heuristics
+
+```go
+agent := agnogo.Agent("...", agnogo.Reliable(
+    agnogo.WithReliableConfidenceThreshold(0.7), // retry below 0.7
+))
+```
+
+### Agent State Machine
+
+Explicit lifecycle states with validated transitions and audit trail:
+
+```
+idle → processing → calling_model → calling_tool → complete
+                  → waiting_approval
+                  → error
+                  → budget_exceeded
+```
+
+```go
+sm := agnogo.NewStateMachine()
+sm.OnTransition(func(from, to agnogo.AgentState, reason string) {
+    log.Printf("state: %s → %s (%s)", from, to, reason)
+})
+
+// Checkpoint and resume for crash recovery
+cp := agnogo.SaveCheckpoint(session, state, messages, cost, step)
+restored := agnogo.LoadCheckpoint(session)
+```
+
+### Pluggable Interfaces
+
+Every reliability component implements an interface. Swap any with your own:
+
+```go
+agent := agnogo.Agent("...", agnogo.Reliable(
+    agnogo.WithCustomHallucination(myDetector),   // HallucinationChecker
+    agnogo.WithCustomPII(myGDPRLib),              // PIIScanner
+    agnogo.WithCustomToolValidator(myValidator),   // ToolOutputValidator
+    agnogo.WithCustomConfidence(myScorer),         // ConfidenceScorer
+    agnogo.WithCustomCost(myBilling),              // CostBudget
+))
+```
+
+Interfaces: `HallucinationChecker`, `PIIScanner`, `ToolOutputValidator`, `ConfidenceScorer`, `CostChecker`.
+
+---
+
+## MCP (Model Context Protocol)
+
+Connect to any MCP server and use its tools as native agnogo tools. Zero external dependencies.
+
+```go
+import "github.com/saeedalam/agnogo/mcp"
+
+// Stdio transport (subprocess)
+tools, _ := mcp.Connect(ctx, "npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp")
+defer tools.Close()
+
+agent := agnogo.Agent("You manage files.", agnogo.Tools(tools.ToolDefs()...))
+resp, _ := agent.Ask(ctx, "List files in /tmp")
+```
+
+---
+
+## OpenTelemetry Export
+
+Ship agent metrics to Datadog, Grafana, or any OTLP-compatible backend:
+
+```go
+import "github.com/saeedalam/agnogo/otel"
+
+exporter := otel.NewExporter("http://localhost:4318/v1/metrics",
+    otel.WithInterval(30 * time.Second),
+    otel.WithServiceName("my-agent"),
+)
+defer exporter.Stop()
+
+agent := agnogo.Agent("...", agnogo.WithTrace(exporter.Trace()))
+```
+
+Exports: runs, model calls, tool calls, tokens, errors, latency, guardrail blocks, per-tool counts.
+
+---
+
+## Eval Framework
+
+Automated quality testing for agents with built-in assertions:
+
+```go
+eval := agnogo.NewEval(agent)
+eval.Add("greeting", "Say hello", agnogo.Contains("hello"))
+eval.Add("math", "What is 2+2?", agnogo.Contains("4"))
+eval.Add("safety", "Harmful request", agnogo.NotContains("harmful"))
+eval.WithConcurrency(3)
+
+report := eval.Run(ctx)
+report.Print()             // human-readable summary
+fmt.Println(report.JSON()) // machine-readable
+```
+
+Assertions: `Contains`, `NotContains`, `Exact`, `MatchesRegex`, `LengthBetween`, `Custom`.
+
+---
+
+## Concurrent Tool Execution
+
+When the LLM requests multiple tool calls in a single turn, agnogo executes them concurrently using goroutines. If the model requests 3 API calls that each take 1 second, the turn takes 1 second total instead of 3.
+
+This is automatic — no configuration needed. Details:
+
+- **Pre-scan phase**: duplicates and approval-requiring tools are detected before any goroutine launches
+- **Parallel dispatch**: each tool runs in its own goroutine with independent panic recovery
+- **Ordered collection**: results are collected in the original order after all goroutines complete
+- Trace and debug callbacks fire in deterministic order
+- Tool output validation runs concurrently (validators are stateless)
+
+### Async Post-Processing
+
+Memory extraction, session save, and summarization can run in a background goroutine so `Run()` returns immediately after generating the response:
+
+```go
+agent := agnogo.Agent("...", agnogo.AsyncPostProcess)
+resp, _ := agent.Run(ctx, session, "Hello")
+
+// Response is available immediately. Post-processing runs in background.
+// Optionally wait for completion:
+<-resp.PostProcessDone
+```
+
+Impact: eliminates 1-3 seconds of user-perceived latency when LLM-based memory or summarization is enabled.
+
+`PostProcessDone` is a `<-chan struct{}` that closes when background work finishes. It is `nil` when async mode is not enabled (the default).
+
+---
+
+## Graph Function Nodes
+
+Graph nodes don't have to be LLM agents. Use `AddFuncNode` to insert pure Go functions for data transformation, routing logic, or side effects between LLM steps:
+
+```go
+g := agnogo.NewGraph()
+
+// LLM agent classifies the input
+g.AddNode("classify", classifyAgent)
+
+// Pure Go function parses the classification and sets routing state
+g.AddFuncNode("route", func(ctx context.Context, state *agnogo.GraphState) error {
+    resp := state.GetStr("last_response") // reads the input (previous node's output)
+    if strings.Contains(resp, "REFUND") {
+        state.Set("intent", "refund")
+    } else {
+        state.Set("intent", "support")
+    }
+    state.Set("last_response", resp) // pass through to next node
+    return nil
+})
+
+// LLM agents handle each case
+g.AddNode("refund", refundAgent)
+g.AddNode("support", supportAgent)
+
+g.SetEntry("classify").SetEnd("refund", "support")
+g.AddEdge("classify", "route", nil)
+g.AddEdge("route", "refund", func(ctx context.Context, s *agnogo.GraphState) bool {
+    return s.GetStr("intent") == "refund"
+})
+g.AddEdge("route", "support", nil)
+
+resp, _ := g.Run(ctx, session, "I want a refund for order #123")
+```
+
+Function nodes:
+- Receive the current input via `state.GetStr("last_response")`
+- Control output to the next node by setting `state["last_response"]`
+- If they don't modify `last_response`, the input passes through unchanged
+- Can set any state keys for conditional edge routing
+- Execute without an LLM call — zero latency, zero cost
+- Panic on `nil` fn (consistent with `New()` panicking on nil Model)

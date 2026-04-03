@@ -78,9 +78,15 @@ func (s *GraphState) GetBool(key string) bool {
 	return false
 }
 
+// GraphFunc is a pure Go function that can serve as a graph node.
+// It receives the graph state and can read/modify it directly.
+// Set state["last_response"] to control the input passed to the next node.
+type GraphFunc func(ctx context.Context, state *GraphState) error
+
 type graphNode struct {
 	name  string
-	agent *Core
+	agent *Core     // non-nil for agent nodes
+	fn    GraphFunc // non-nil for function nodes
 }
 
 type graphEdge struct {
@@ -131,6 +137,17 @@ func NewGraph() *Graph {
 // AddNode registers an agent as a named node in the graph. Chainable.
 func (g *Graph) AddNode(name string, agent *Core) *Graph {
 	g.nodes[name] = &graphNode{name: name, agent: agent}
+	return g
+}
+
+// AddFuncNode registers a pure Go function as a graph node. Function nodes
+// execute without an LLM call — they read and modify GraphState directly.
+// Set state["last_response"] to control the input to the next node. Chainable.
+func (g *Graph) AddFuncNode(name string, fn GraphFunc) *Graph {
+	if fn == nil {
+		panic("agnogo: AddFuncNode fn must not be nil")
+	}
+	g.nodes[name] = &graphNode{name: name, fn: fn}
 	return g
 }
 
@@ -199,16 +216,29 @@ func (g *Graph) Run(ctx context.Context, session *Session, input string) (*Respo
 			return nil, fmt.Errorf("agnogo: node %q not found", currentNode)
 		}
 
-		// Run the node's agent
-		resp, err := node.agent.Run(ctx, session, currentInput)
-		if err != nil {
-			return nil, fmt.Errorf("agnogo: node %q failed: %w", currentNode, err)
-		}
+		var nodeText string
 
-		// Store response in state
-		allTools = append(allTools, resp.ToolsCalled...)
-		state.Set("last_response", resp.Text)
-		state.Set(currentNode+"_response", resp.Text)
+		if node.fn != nil {
+			// Function node: execute directly, no LLM call.
+			// Set last_response to the current input so fn can read it.
+			// If fn doesn't modify last_response, the input passes through.
+			state.Set("last_response", currentInput)
+			if err := node.fn(ctx, state); err != nil {
+				return nil, fmt.Errorf("agnogo: func node %q failed: %w", currentNode, err)
+			}
+			nodeText = state.GetStr("last_response")
+			state.Set(currentNode+"_response", nodeText)
+		} else {
+			// Agent node: run the LLM agent
+			resp, err := node.agent.Run(ctx, session, currentInput)
+			if err != nil {
+				return nil, fmt.Errorf("agnogo: node %q failed: %w", currentNode, err)
+			}
+			allTools = append(allTools, resp.ToolsCalled...)
+			nodeText = resp.Text
+			state.Set("last_response", nodeText)
+			state.Set(currentNode+"_response", nodeText)
+		}
 
 		// Evaluate outgoing edges
 		next := g.resolveNext(ctx, currentNode, state)
@@ -216,12 +246,12 @@ func (g *Graph) Run(ctx context.Context, session *Session, input string) (*Respo
 		if next == "" {
 			// No edge matched
 			if g.endNodes[currentNode] {
-				return &Response{Text: resp.Text, ToolsCalled: allTools}, nil
+				return &Response{Text: nodeText, ToolsCalled: allTools}, nil
 			}
 			return nil, fmt.Errorf("agnogo: node %q is not an end node and no edge matched", currentNode)
 		}
 
-		currentInput = resp.Text
+		currentInput = nodeText
 		currentNode = next
 	}
 

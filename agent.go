@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -56,6 +57,8 @@ type Core struct {
 	piiScanner           PIIScanner
 	toolOutputValidator  ToolOutputValidator
 	confidenceScorer     ConfidenceScorer
+
+	asyncPostProcess bool // fire-and-forget post-processing (memory, save, summarize)
 }
 
 // Config configures a new Core.
@@ -176,11 +179,12 @@ func (a *Core) Tools() *ToolRegistry { return a.tools }
 
 // Response is the result of Run.
 type Response struct {
-	Text          string          `json:"text"`
-	ToolsCalled   []string        `json:"tools_called,omitempty"`
-	NeedsApproval bool            `json:"needs_approval,omitempty"`
-	Approval      *HumanApproval  `json:"approval,omitempty"`
-	Metrics       *RunMetrics     `json:"metrics,omitempty"`
+	Text            string          `json:"text"`
+	ToolsCalled     []string        `json:"tools_called,omitempty"`
+	NeedsApproval   bool            `json:"needs_approval,omitempty"`
+	Approval        *HumanApproval  `json:"approval,omitempty"`
+	Metrics         *RunMetrics     `json:"metrics,omitempty"`
+	PostProcessDone <-chan struct{} `json:"-"` // closed when async post-processing finishes; nil if sync
 }
 
 // Run processes one user message. The main method.
@@ -353,28 +357,44 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 			dbg.printResponse(text)
 			session.AddMessage("assistant", text)
 
-			// Memory extraction
-			if a.memory != nil {
-				a.memory.Extract(ctx, session, userMessage, text)
-			}
-
-			// Auto-save
-			if a.storage != nil {
-				saveErr := a.storage.Save(ctx, session)
-				if a.trace != nil && a.trace.OnSessionSave != nil {
-					a.trace.OnSessionSave(session, saveErr)
-				}
-			}
-
-			// Auto-summarize if configured
-			if a.summarizeThreshold > 0 && len(session.History) > a.summarizeThreshold {
-				_ = SummarizeSession(ctx, a, session, a.summarizeKeepRecent)
-			}
-
 			metrics.ToolCalls = len(toolsCalled)
 			metrics.Duration = time.Since(runStart)
 			dbg.printRunEnd(runID, metrics)
-			return &Response{Text: text, ToolsCalled: toolsCalled, Metrics: metrics}, nil
+
+			result := &Response{Text: text, ToolsCalled: toolsCalled, Metrics: metrics}
+
+			postProcess := func(pctx context.Context) {
+				if a.memory != nil {
+					a.memory.Extract(pctx, session, userMessage, text)
+				}
+				if a.storage != nil {
+					saveErr := a.storage.Save(pctx, session)
+					if a.trace != nil && a.trace.OnSessionSave != nil {
+						a.trace.OnSessionSave(session, saveErr)
+					}
+				}
+				if a.summarizeThreshold > 0 && len(session.History) > a.summarizeThreshold {
+					_ = SummarizeSession(pctx, a, session, a.summarizeKeepRecent)
+				}
+			}
+
+			if a.asyncPostProcess {
+				done := make(chan struct{})
+				result.PostProcessDone = done
+				go func() {
+					defer close(done)
+					defer func() {
+						if p := recover(); p != nil {
+							slog.Error("agnogo: post-processing panic", "panic", p, "session", session.ID)
+						}
+					}()
+					postProcess(context.Background())
+				}()
+			} else {
+				postProcess(ctx)
+			}
+
+			return result, nil
 		}
 
 		// Tool calls — save assistant message with tool_calls to both local and session history
@@ -387,8 +407,14 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 		session.History = append(session.History, assistantMsg)
 		session.mu.Unlock()
 
-		for _, tc := range resp.ToolCalls {
+		// Phase A: Pre-scan for duplicates and approval-requiring tools.
+		// This runs sequentially before any concurrent execution.
+		// Parse args once here and reuse in Phase B to avoid double parsing.
+		parsedArgs := make([]map[string]string, len(resp.ToolCalls))
+		var executable []int // indices into resp.ToolCalls that passed pre-scan
+		for i, tc := range resp.ToolCalls {
 			args := ParseArgs(tc.Arguments)
+			parsedArgs[i] = args
 
 			// Duplicate detection
 			key := tc.Name + ":" + tc.Arguments
@@ -400,7 +426,7 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 				continue
 			}
 
-			// Human approval check
+			// Human approval check — return immediately on first match
 			tool := a.tools.Get(tc.Name)
 			if tool != nil && tool.RequireApproval {
 				approval := HumanApproval{
@@ -413,7 +439,6 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 					a.trace.OnApproval(approval)
 				}
 				dbg.printApproval(tc.Name, tool.ApprovalReason)
-				// Save state for resume
 				session.Set("_pending_tool", tc.Name)
 				session.Set("_pending_args", tc.Arguments)
 				session.Set("_pending_call_id", tc.ID)
@@ -432,48 +457,75 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 				}, nil
 			}
 
-			// Execute tool with panic recovery
-			toolStart := time.Now()
-			result, err := func() (r string, e error) {
-				defer func() {
-					if p := recover(); p != nil {
-						r = fmt.Sprintf("Tool '%s' panicked: %v. Try a different approach.", tc.Name, p)
-						e = nil
-						slog.Error("agnogo: tool panic recovered", "tool", tc.Name, "panic", p)
-					}
+			executable = append(executable, i)
+		}
+
+		// Phase B: Execute all tools concurrently.
+		// Each goroutine writes to its own index — no mutex needed.
+		type toolExecResult struct {
+			name      string
+			rawResult string // pre-validation result (for trace/debug)
+			result    string // post-validation result (for messages)
+			dur       time.Duration
+			err       error
+			args      map[string]string
+		}
+		execResults := make([]toolExecResult, len(executable))
+		var wg sync.WaitGroup
+		for ei, idx := range executable {
+			tc := resp.ToolCalls[idx]
+			args := parsedArgs[idx]
+			wg.Add(1)
+			go func(slot int, tc ToolCall, args map[string]string) {
+				defer wg.Done()
+				toolStart := time.Now()
+				result, err := func() (r string, e error) {
+					defer func() {
+						if p := recover(); p != nil {
+							r = fmt.Sprintf("Tool '%s' panicked: %v. Try a different approach.", tc.Name, p)
+							e = nil
+							slog.Error("agnogo: tool panic recovered", "tool", tc.Name, "panic", p)
+						}
+					}()
+					return a.tools.Invoke(ctx, tc.Name, args)
 				}()
-				return a.tools.Invoke(ctx, tc.Name, args)
-			}()
-			toolDur := time.Since(toolStart)
+				if err != nil {
+					result = fmt.Sprintf("Tool '%s' failed: %s. Try a different approach.", tc.Name, err.Error())
+				}
+				rawResult := result
+				// Tool output validation (validators are stateless — safe concurrently)
+				if a.toolOutputValidator != nil {
+					if validated, verr := a.toolOutputValidator.Validate(tc.Name, result); verr != nil {
+						result = fmt.Sprintf("Tool '%s' output rejected: %s", tc.Name, verr.Error())
+					} else {
+						result = validated
+					}
+				} else if a.toolValidator != nil {
+					if validated, verr := a.toolValidator.validateToolOutput(tc.Name, result); verr != nil {
+						result = fmt.Sprintf("Tool '%s' output rejected: %s", tc.Name, verr.Error())
+					} else {
+						result = validated
+					}
+				}
+				execResults[slot] = toolExecResult{
+					name: tc.Name, rawResult: rawResult, result: result,
+					dur: time.Since(toolStart), err: err, args: args,
+				}
+			}(ei, tc, args)
+		}
+		wg.Wait()
 
-			if err != nil {
-				result = fmt.Sprintf("Tool '%s' failed: %s. Try a different approach.", tc.Name, err.Error())
-			}
-
-			dbg.printToolCall(tc.Name, args, result, toolDur, err)
+		// Phase C: Collect results in original order for deterministic behavior.
+		// Trace/debug sees the raw (pre-validation) result, matching original behavior.
+		for i, r := range execResults {
+			tc := resp.ToolCalls[executable[i]]
+			dbg.printToolCall(r.name, r.args, r.rawResult, r.dur, r.err)
 			if a.trace != nil && a.trace.OnToolCall != nil {
-				a.trace.OnToolCall(tc.Name, args, result, toolDur, err)
+				a.trace.OnToolCall(r.name, r.args, r.rawResult, r.dur, r.err)
 			}
-
-			toolsCalled = append(toolsCalled, tc.Name)
-
-			// Tool output validation (custom or built-in)
-			if a.toolOutputValidator != nil {
-				if validated, verr := a.toolOutputValidator.Validate(tc.Name, result); verr != nil {
-					result = fmt.Sprintf("Tool '%s' output rejected: %s", tc.Name, verr.Error())
-				} else {
-					result = validated
-				}
-			} else if a.toolValidator != nil {
-				if validated, verr := a.toolValidator.validateToolOutput(tc.Name, result); verr != nil {
-					result = fmt.Sprintf("Tool '%s' output rejected: %s", tc.Name, verr.Error())
-				} else {
-					result = validated
-				}
-			}
-
-			messages = append(messages, Message{Role: "tool", Content: result, Name: tc.ID})
-			session.AddToolResult(tc.ID, result)
+			toolsCalled = append(toolsCalled, r.name)
+			messages = append(messages, Message{Role: "tool", Content: r.result, Name: tc.ID})
+			session.AddToolResult(tc.ID, r.result)
 		}
 	}
 

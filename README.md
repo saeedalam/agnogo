@@ -478,6 +478,20 @@ agent := agnogo.Agent("...", agnogo.WithTrace(exporter.Trace()))
 
 Exports: runs, model calls, tool calls, tokens, errors, latency, guardrail blocks, per-tool counts.
 
+## Concurrent Tool Execution
+
+When the LLM requests multiple tools in one turn, agnogo fires them concurrently. 3 API calls that each take 1s → 1s total, not 3s. Automatic, no configuration needed.
+
+## Async Post-Processing
+
+Memory extraction, session save, and summarization can run in the background:
+
+```go
+agent := agnogo.Agent("...", agnogo.AsyncPostProcess)
+resp, _ := agent.Run(ctx, session, "Hello")
+// Response returns immediately. Wait if needed: <-resp.PostProcessDone
+```
+
 ## Graph Workflows
 
 ```go
@@ -489,6 +503,16 @@ g.AddEdge("classify", "refund", func(ctx context.Context, state *agnogo.GraphSta
 })
 g.AddEdge("classify", "support", nil) // default edge
 resp, _ := g.Run(ctx, session, "I want a refund")
+```
+
+Function nodes — pure Go data processing between LLM steps (zero cost, zero latency):
+
+```go
+g.AddFuncNode("transform", func(ctx context.Context, state *agnogo.GraphState) error {
+    data := state.GetStr("last_response")
+    state.Set("last_response", strings.ToUpper(data))
+    return nil
+})
 ```
 
 ## Run Context (Dependency Injection)
@@ -531,7 +555,7 @@ agent := agnogo.Agent("...", agnogo.WithSummarize(30)) // summarize after 30 mes
 
 ```
 agnogo/
-  agent.go             Core struct + run loop
+  agent.go             Core struct + run loop (concurrent tool execution)
   smart.go             Agent() constructor + auto-detection
   ask.go               Ask, AskStream, AskStructured
   typed_tool.go        TypedTool[In, Out]
@@ -546,15 +570,27 @@ agnogo/
   knowledge.go         Knowledge interface + RAG injection
   memory.go            Pattern + LLM memory extraction
   guardrail.go         Input/output guardrails
-  hallucination.go     HallucinationGuard
-  graph.go             Graph workflows with conditional edges
+  hallucination.go     Pattern-based hallucination detection
+  hallucination_semantic.go  TF-IDF cosine similarity grounding
+  reliability.go       Reliable() one-liner + pluggable options
+  reliable_interfaces.go  HallucinationChecker, PIIScanner, etc.
+  cost.go              CostBudget, per-run/session/minute limits
+  pii.go               PII detection, redaction, GDPR compliance
+  confidence.go        ConfidenceScore, heuristic scoring
+  statemachine.go      Agent state machine + checkpoints
+  toolvalidate.go      Tool output validation (size, format, JSON)
+  graph.go             Graph workflows + function nodes
+  eval.go              Agent evaluation framework
   runctx.go            RunContext dependency injection
   events.go            EventBus pub/sub
   hook.go              Middleware hook chain
   summarize.go         Session summarization
+  consistency.go       Consistency checking between runs
   team.go              Multi-agent teams + routing
   workflow.go          Sequential, Parallel, Loop, Condition, Route
   streaming.go         Token-level SSE + fallback
+  mcp/                 Model Context Protocol integration
+  otel/                OpenTelemetry export
   providers/           10 LLM providers
   tools/               35 built-in tools
   knowledge/           pgvector, Qdrant, ChromaDB

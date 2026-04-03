@@ -192,19 +192,45 @@ This document tracks feature parity between the two projects.
 | Print response | `print_response()` | `PrintResponse()` | Done |
 | CLI app | `cli_app()` | `CLI()` | Done |
 | Serialization | `to_dict()`/`from_dict()` | `ToDict()`/`ToJSON()` | Done |
-| OpenTelemetry | Yes | -- | Todo |
-| AgentOS dashboard | Yes | -- (use Trace hooks) | Todo |
+| OpenTelemetry | Yes | `otel.NewExporter()` | Done |
+| AgentOS dashboard | Yes | -- (use Trace hooks + OTLP) | Todo |
 
 ## Other
 
 | Feature | Agno | agnogo | Parity |
 |---------|------|--------|--------|
 | Structured output | `output_schema` | `RunStructured[T]()` | Done |
+| MCP tools | `MCPTools` | `mcp.Connect()` | Done |
+| Eval framework | -- | `NewEval()` with assertions | Go-only |
 | Followup questions | `followups=True` | -- | Todo |
 | Learning machine | `learning=True` | -- | Todo |
-| MCP tools | `MCPTools` | -- | Todo |
 | Culture manager | experimental | -- | Todo |
 | Compression | `compress_tool_results` | -- | Todo |
+
+## Reliability Layer (v0.4.0+)
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| `Reliable()` | One-liner: enables all reliability features with sensible defaults | Done |
+| Cost management | Per-run, per-session, per-minute budget enforcement with callbacks | Done |
+| PII detection | Email, phone, credit card (Luhn), SSN, IP address detection | Done |
+| PII guardrails | Block output, redact stored history, custom patterns | Done |
+| State machine | 8 states, validated transitions, audit trail, checkpoint/resume | Done |
+| Tool validation | Output size limits, non-empty checks, JSON validation | Done |
+| Confidence scoring | 0.0-1.0 heuristic (tools, hedging, sources) with retry threshold | Done |
+| Hallucination guard | Pattern-based (dates, times, prices, weather) with severity levels | Done |
+| Semantic grounding | TF-IDF cosine similarity against tool outputs | Done |
+| Hybrid detection | Regex when no tools called, TF-IDF when tools called | Done |
+| Pluggable interfaces | `HallucinationChecker`, `PIIScanner`, `ToolOutputValidator`, `ConfidenceScorer` | Done |
+
+## Performance & Graph (v0.6.0)
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| Concurrent tool calls | Multiple tool calls fire in parallel via goroutines | Done |
+| Async post-processing | Memory, save, summarize run in background goroutine | Done |
+| Graph function nodes | `AddFuncNode()` for pure Go nodes between LLM steps | Done |
+| Consistency checking | Verify response consistency across multiple runs | Done |
 
 ---
 
@@ -244,6 +270,19 @@ These features exist only in agnogo and have no equivalent in the Python Agno li
 | `NewEventBus()` / `WithEvents()` | Pub/sub event system for decoupled observability |
 | `WithHooks()` | Middleware hook chain wrapping every Run call |
 | `WithSummarize(n)` | Auto-summarize old messages to save context window |
+| `Reliable()` | One-liner production safety: cost budgets, PII, hallucination, tool validation, confidence |
+| `PIIScanner` / `PIIConfig` | Regex PII detection with Luhn validation, redaction, GDPR compliance |
+| `CostBudget` | Per-run, per-session, per-minute cost enforcement with callbacks |
+| `StateMachine` / `Checkpoint` | Agent lifecycle states with transitions, audit trail, crash recovery |
+| `ConfidenceScore` | Heuristic 0.0-1.0 scoring with configurable retry threshold |
+| `SemanticHallucinationChecker` | TF-IDF cosine similarity grounding (zero dependencies) |
+| `HybridHallucinationChecker` | Regex + TF-IDF combined (regex when no tools, TF-IDF when tools called) |
+| Concurrent tool execution | Multiple tool calls fire in parallel via goroutines (automatic) |
+| `AsyncPostProcess` | Memory/save/summarize in background — `Run()` returns immediately |
+| `AddFuncNode()` | Pure Go function nodes in graphs (no LLM call, zero cost) |
+| `mcp.Connect()` | MCP Protocol integration (stdio transport, zero dependencies) |
+| `otel.NewExporter()` | OpenTelemetry OTLP export (runs, tokens, errors, latency) |
+| `NewEval()` | Agent evaluation framework with assertions and parallel runs |
 | 19 utility tools | regex, base64, hash, uuid, time, env, template, yaml, xml, diff, archive, crypto, dns, tcp, markdown, pdf, image, cron, semver, metrics |
 
 ---
@@ -264,24 +303,48 @@ These features exist only in agnogo and have no equivalent in the Python Agno li
 | Storage | 13 | 5 | 38% |
 | Built-in tools | 129 | 35 | 27% |
 | Debug/Observability | 7 | 7 | 100% |
-| Go-exclusive features | 0 | 31 | -- |
-| Tests | | 222 | |
-| Core framework | | | ~92% |
-| Including integrations | | | ~46% |
+| Go-exclusive features | 0 | 45 | -- |
+| Tests | | 243+ | |
+| Core framework | | | ~95% |
+| Including integrations | | | ~48% |
 
-The core agent framework is at ~92% parity. The gap is mainly integrations (providers, vector DBs, tools) which are additive and can be contributed incrementally. agnogo also includes 31 Go-exclusive features (pipelines, resilience, observability, HTTP serving, batch processing, structured errors, Closeable, StreamProvider, serve hardening) with no Python equivalent.
+The core agent framework is at ~95% parity. The gap is mainly integrations (providers, vector DBs, tools) which are additive and can be contributed incrementally. agnogo includes 45 Go-exclusive features — reliability layer (cost management, PII/GDPR, state machine, confidence scoring, semantic hallucination detection), performance features (concurrent tool execution, async post-processing), graph orchestration (function nodes), MCP protocol, OpenTelemetry export, eval framework, plus all the original Go-native patterns (pipelines, resilience, observability, HTTP serving, batch processing, structured errors).
 
 ---
 
 ## Remaining High-Priority Tasks
 
-1. **Session summaries** -- auto-generate conversation summaries
-2. **MCP protocol** -- Model Context Protocol tool support
-3. **Learning machine** -- learn from interactions
-4. **MongoDB storage** -- popular NoSQL backend
-5. **Azure OpenAI provider** -- enterprise customers
-6. **DALL-E tool** -- image generation
-7. **OpenTelemetry export** -- bridge MetricsCollector to OTLP
+1. **Graph time-travel** -- state snapshots + resume from any node
+2. **Graph map-reduce** -- scatter-gather for parallel agent instances
+3. **Graph human-in-the-loop** -- approval edges with suspend/resume
+4. **Learning machine** -- learn from interactions
+5. **MongoDB storage** -- popular NoSQL backend
+6. **Azure OpenAI provider** -- enterprise customers
+7. **A/B testing** -- traffic splitting for prompts/models
+
+## Completed in v0.6.0
+
+- Concurrent tool execution (parallel goroutines, ordered collection)
+- Async post-processing (`AsyncPostProcess` option, `PostProcessDone` channel)
+- Graph function nodes (`AddFuncNode()` for pure Go processing)
+- Consistency checking between runs
+
+## Completed in v0.5.0
+
+- MCP Protocol integration (`mcp.Connect()`, stdio transport)
+- OpenTelemetry export (`otel.NewExporter()`, OTLP metrics)
+- Agent evaluation framework (`NewEval()`, assertions, parallel runs)
+
+## Completed in v0.4.0
+
+- `Reliable()` one-liner with pluggable components
+- Cost management (`CostBudget`, per-run/session/minute enforcement)
+- PII detection and GDPR compliance (`PIIScanner`, `PIIConfig`, Luhn validation)
+- Agent state machine (`StateMachine`, `Checkpoint`, crash recovery)
+- Tool output validation (`ToolValidator`, size/format/JSON checks)
+- Confidence scoring (`ConfidenceScore`, heuristic 0.0-1.0 with retry threshold)
+- Semantic hallucination detection (TF-IDF cosine similarity, hybrid mode)
+- Pluggable reliability interfaces (`HallucinationChecker`, `PIIScanner`, `ToolOutputValidator`, `ConfidenceScorer`)
 
 ## Completed in v0.2.0
 

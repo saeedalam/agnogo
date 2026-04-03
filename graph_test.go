@@ -2,6 +2,8 @@ package agnogo
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -176,4 +178,192 @@ func TestGraphMissingEntry(t *testing.T) {
 	if got := err.Error(); got != "agnogo: graph has no entry node" {
 		t.Errorf("error = %q", got)
 	}
+}
+
+// ── Phase 2: Function Nodes ────────────────────────────────
+
+func TestGraphFuncNode(t *testing.T) {
+	// func node sets state, downstream agent reads it
+	modelB := &mockModel{responses: []ModelResponse{{Text: "final"}}}
+	agentB := New(Config{Model: modelB})
+
+	g := NewGraph()
+	g.AddFuncNode("transform", func(ctx context.Context, state *GraphState) error {
+		state.Set("last_response", "transformed-input")
+		state.Set("custom_key", "custom_value")
+		return nil
+	})
+	g.AddNode("finish", agentB)
+	g.SetEntry("transform")
+	g.SetEnd("finish")
+	g.AddEdge("transform", "finish", nil)
+
+	resp, err := g.Run(context.Background(), NewSession("func-node"), "start")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != "final" {
+		t.Errorf("got %q, want %q", resp.Text, "final")
+	}
+}
+
+func TestGraphFuncNodeOnly(t *testing.T) {
+	// Graph with only function nodes — no LLM calls at all
+	g := NewGraph()
+	g.AddFuncNode("step1", func(ctx context.Context, state *GraphState) error {
+		state.Set("last_response", "step1-done")
+		return nil
+	})
+	g.AddFuncNode("step2", func(ctx context.Context, state *GraphState) error {
+		prev := state.GetStr("step1_response")
+		state.Set("last_response", prev+"+step2-done")
+		return nil
+	})
+	g.SetEntry("step1")
+	g.SetEnd("step2")
+	g.AddEdge("step1", "step2", nil)
+
+	resp, err := g.Run(context.Background(), NewSession("func-only"), "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != "step1-done+step2-done" {
+		t.Errorf("got %q, want %q", resp.Text, "step1-done+step2-done")
+	}
+}
+
+func TestGraphFuncNodeError(t *testing.T) {
+	g := NewGraph()
+	g.AddFuncNode("failing", func(ctx context.Context, state *GraphState) error {
+		return fmt.Errorf("processing failed")
+	})
+	g.SetEntry("failing")
+	g.SetEnd("failing")
+
+	_, err := g.Run(context.Background(), NewSession("func-error"), "input")
+	if err == nil {
+		t.Fatal("expected error from failing func node")
+	}
+	if !strings.Contains(err.Error(), "func node") || !strings.Contains(err.Error(), "processing failed") {
+		t.Errorf("error = %q, want to contain 'func node' and 'processing failed'", err.Error())
+	}
+}
+
+func TestGraphMixedNodes(t *testing.T) {
+	// agent -> func -> agent flow
+	modelA := &mockModel{responses: []ModelResponse{{Text: "from-A"}}}
+	modelC := &mockModel{responses: []ModelResponse{{Text: "from-C"}}}
+	agentA := New(Config{Model: modelA})
+	agentC := New(Config{Model: modelC})
+
+	g := NewGraph()
+	g.AddNode("A", agentA)
+	g.AddFuncNode("B", func(ctx context.Context, state *GraphState) error {
+		prev := state.GetStr("A_response")
+		state.Set("last_response", "processed:"+prev)
+		return nil
+	})
+	g.AddNode("C", agentC)
+	g.SetEntry("A")
+	g.SetEnd("C")
+	g.AddEdge("A", "B", nil)
+	g.AddEdge("B", "C", nil)
+
+	resp, err := g.Run(context.Background(), NewSession("mixed"), "start")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != "from-C" {
+		t.Errorf("got %q, want %q", resp.Text, "from-C")
+	}
+}
+
+func TestGraphFuncNodeConditionalRouting(t *testing.T) {
+	// func node sets state that determines edge routing
+	modelApprove := &mockModel{responses: []ModelResponse{{Text: "approved"}}}
+	modelReject := &mockModel{responses: []ModelResponse{{Text: "rejected"}}}
+	approveAgent := New(Config{Model: modelApprove})
+	rejectAgent := New(Config{Model: modelReject})
+
+	g := NewGraph()
+	g.AddFuncNode("classify", func(ctx context.Context, state *GraphState) error {
+		state.Set("last_response", "classified")
+		state.Set("score", 85)
+		return nil
+	})
+	g.AddNode("approve", approveAgent)
+	g.AddNode("reject", rejectAgent)
+	g.SetEntry("classify")
+	g.SetEnd("approve", "reject")
+	g.AddEdge("classify", "approve", func(ctx context.Context, state *GraphState) bool {
+		return state.GetInt("score") >= 80
+	})
+	g.AddEdge("classify", "reject", nil) // default
+
+	resp, err := g.Run(context.Background(), NewSession("func-routing"), "check")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != "approved" {
+		t.Errorf("got %q, want %q", resp.Text, "approved")
+	}
+}
+
+func TestGraphFuncNodeReceivesInput(t *testing.T) {
+	// Entry function node must be able to read the original input via last_response
+	g := NewGraph()
+	var receivedInput string
+	g.AddFuncNode("entry", func(ctx context.Context, state *GraphState) error {
+		receivedInput = state.GetStr("last_response")
+		state.Set("last_response", "processed:"+receivedInput)
+		return nil
+	})
+	g.SetEntry("entry")
+	g.SetEnd("entry")
+
+	resp, err := g.Run(context.Background(), NewSession("func-input"), "hello world")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receivedInput != "hello world" {
+		t.Errorf("func node received input %q, want %q", receivedInput, "hello world")
+	}
+	if resp.Text != "processed:hello world" {
+		t.Errorf("got %q, want %q", resp.Text, "processed:hello world")
+	}
+}
+
+func TestGraphFuncNodePassthrough(t *testing.T) {
+	// If a function node doesn't set last_response, the input passes through
+	modelB := &mockModel{responses: []ModelResponse{{Text: "final"}}}
+	agentB := New(Config{Model: modelB})
+
+	g := NewGraph()
+	g.AddFuncNode("noop", func(ctx context.Context, state *GraphState) error {
+		// Intentionally do NOT set last_response — should pass through
+		state.Set("side_effect", "done")
+		return nil
+	})
+	g.AddNode("finish", agentB)
+	g.SetEntry("noop")
+	g.SetEnd("finish")
+	g.AddEdge("noop", "finish", nil)
+
+	resp, err := g.Run(context.Background(), NewSession("passthrough"), "original input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != "final" {
+		t.Errorf("got %q, want %q", resp.Text, "final")
+	}
+}
+
+func TestGraphAddFuncNodeNilPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic for nil fn")
+		}
+	}()
+	g := NewGraph()
+	g.AddFuncNode("bad", nil)
 }

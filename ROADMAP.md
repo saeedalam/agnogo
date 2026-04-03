@@ -34,109 +34,37 @@ Every agent framework focuses on features. agnogo focuses on **reliability** —
 - Event bus with OnAll, Filter, EventCount
 - RunContext for dependency injection into tools
 
+### v0.4.0 — Reliability Layer
+- Pluggable `Reliable()` one-liner with sensible defaults
+- Cost management: per-run, per-session, per-minute budget enforcement with callbacks
+- PII detection: emails, phone numbers, credit cards (Luhn), SSNs, IP addresses
+- PII guardrails: block output, redact stored history, custom patterns, GDPR compliance
+- Agent state machine: explicit state transitions, audit trail, checkpoint/resume
+- Tool output validation: size limits, non-empty checks, JSON validation
+- Confidence scoring: 0.0-1.0 heuristic scoring with automatic retry below threshold
+- Semantic hallucination detection via TF-IDF cosine similarity (+ hybrid mode)
+- All components pluggable via interfaces: `HallucinationChecker`, `PIIScanner`, `ToolOutputValidator`, `ConfidenceScorer`, `CostChecker`
+
+### v0.5.0 — MCP, Observability, Eval
+- MCP Protocol integration (stdio transport, zero external dependencies)
+- OpenTelemetry export (OTLP metrics: runs, tokens, errors, latency, per-tool counts)
+- Agent evaluation framework with assertions (`Contains`, `NotContains`, `Exact`, `MatchesRegex`, `Custom`)
+- Concurrent eval runs with configurable parallelism
+
+### v0.6.0 — Performance & Graph Orchestration
+- Concurrent tool execution: multiple tool calls fire in parallel via goroutines
+- Async post-processing: memory extraction, session save, and summarization run in background
+- Graph function nodes: `AddFuncNode()` for pure Go data processing between LLM steps
+- Consistency checking between runs
+
 ## What's Next
 
-### v0.4.0 — Reliability Layer (in progress)
+### Future
 
-The features that make agents safe for production. No other framework does this well.
-
-#### Cost Management
-Stop runaway agents from burning money.
-
-```go
-agent := agnogo.Agent("...", agnogo.WithBudget(agnogo.CostBudget{
-    MaxPerRun:     0.50,  // max $0.50 per conversation turn
-    MaxPerSession: 5.00,  // max $5 per session lifetime
-    MaxPerMinute:  2.00,  // rate limit on spend
-    OnExceeded: func(spent, limit float64) {
-        alert.Send(fmt.Sprintf("Budget exceeded: $%.2f / $%.2f", spent, limit))
-    },
-}))
-```
-
-- Real-time cost tracking in the agent loop
-- Budget enforcement: stops mid-run if limit exceeded
-- Per-session cumulative cost tracking
-- Cost alerts and callbacks
-
-#### PII Detection + GDPR Compliance
-Don't let agents leak personal data.
-
-```go
-agent := agnogo.Agent("...", agnogo.WithPIIGuard(agnogo.PIIConfig{
-    BlockOutput:   true,              // block PII in agent responses
-    RedactInput:   true,              // redact PII from stored history
-    AllowedFields: []string{"email"}, // user consented to email sharing
-    OnDetected:    auditLog,          // compliance audit trail
-}))
-```
-
-- Detect: emails, phone numbers, credit cards (Luhn), SSNs, IP addresses
-- Block PII in output or redact from stored history
-- GDPR helpers: `PurgeUserData()`, `ExportUserData()`, consent tracking
-- Custom PII patterns for domain-specific data
-
-#### Agent State Machine
-Know exactly what your agent is doing.
-
-```go
-States: idle → processing → waiting_tool → waiting_approval → complete
-                         → error → budget_exceeded
-```
-
-- Explicit state transitions with validation
-- Audit trail of all state changes
-- Checkpoint and resume: crash recovery mid-conversation
-- State-based hooks: run code on state entry/exit
-
-#### Tool Output Validation
-Don't trust tool results blindly.
-
-```go
-agent := agnogo.Agent("...", agnogo.WithToolValidation(agnogo.ToolValidator{
-    MaxOutputSize:   50000,  // reject tool output over 50KB
-    RequireNonEmpty: true,   // reject empty results
-    JSONValidate:    true,   // validate JSON is well-formed
-}))
-```
-
-- Validate tool output size, format, non-emptiness
-- Smart loop detection: detect A-B-A-B cycling patterns, not just same-call repeats
-- Auto-retry with different prompt when tool returns garbage
-
-#### Confidence Scoring
-Know when to trust the agent's response.
-
-```go
-agent := agnogo.Agent("...", agnogo.WithConfidence(0.5))
-// Responses below 0.5 confidence trigger automatic retry with tool instructions
-```
-
-- Score 0.0-1.0 based on: tool usage, hallucination check, hedging language, source count
-- Configurable threshold: below threshold triggers retry
-- Confidence metadata on every response
-
-#### One-Line Production Safety
-
-```go
-// Enable ALL reliability features with sensible defaults
-agent := agnogo.Agent("...", agnogo.Reliable())
-
-// Equivalent to:
-// - Cost budget: $1/run, $10/session
-// - PII guard: block output, redact input
-// - Tool validation: non-empty, JSON check, 50KB limit
-// - Confidence threshold: 0.5
-// - Enhanced loop detection
-// - Hallucination guard (already default)
-```
-
-### Future (v0.5.0+)
-
-- **MCP Protocol** — Model Context Protocol integration for standardized tool interop
-- **OpenTelemetry export** — plug into existing observability stacks
 - **A/B testing** — test different prompts/models with traffic splitting
-- **Agent evaluation** — automated quality scoring of agent responses
+- **Graph time-travel** — state snapshots + resume from any node
+- **Graph map-reduce** — scatter-gather pattern for parallel agent instances
+- **Graph human-in-the-loop** — approval edges with suspend/resume
 - **Multi-turn planning** — agent plans multiple steps before executing
 - **Long-term memory** — cross-session memory with embedding search
 

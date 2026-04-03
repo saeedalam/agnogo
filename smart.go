@@ -47,6 +47,14 @@ var UnsafeMode Option = optionFunc(func(sc *smartConfig) {
 	sc.unsafe = true
 })
 
+// AsyncPostProcess moves memory extraction, session save, and summarization
+// into a background goroutine so Run() returns immediately after generating
+// the response text. Callers can wait on Response.PostProcessDone if they
+// need confirmation that post-processing finished.
+var AsyncPostProcess Option = optionFunc(func(sc *smartConfig) {
+	sc.asyncPostProcess = true
+})
+
 // smartConfig is an internal configuration struct that extends Config
 // with fields used only by the Agent() constructor.
 type smartConfig struct {
@@ -56,6 +64,7 @@ type smartConfig struct {
 	summarizeThreshold  int
 	summarizeKeepRecent int
 	unsafe              bool
+	asyncPostProcess    bool
 	costBudget          *CostBudget
 	piiConfig           *PIIConfig
 	toolValidator       *ToolValidator
@@ -173,6 +182,7 @@ func Agent(instructions string, opts ...Option) *Core {
 	a.piiScanner = sc.piiScanner
 	a.toolOutputValidator = sc.toolOutputValidator
 	a.confidenceScorer = sc.confidenceScorer
+	a.asyncPostProcess = sc.asyncPostProcess
 
 	if sc.piiConfig != nil {
 		if sc.piiScanner != nil {

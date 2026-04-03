@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -500,4 +501,258 @@ func TestToolRegistryConcurrent(t *testing.T) {
 	if r.Count() != 10 {
 		t.Errorf("count = %d, want 10", r.Count())
 	}
+}
+
+// ── Phase 2: Concurrent Tool Execution ─────────────────────
+
+func TestConcurrentToolCallsParallel(t *testing.T) {
+	// 3 tools each sleep 100ms. Sequential = ~300ms. Concurrent = ~100ms.
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCall{
+			{ID: "c1", Name: "slow_a", Arguments: `{}`},
+			{ID: "c2", Name: "slow_b", Arguments: `{}`},
+			{ID: "c3", Name: "slow_c", Arguments: `{}`},
+		}},
+		{Text: "done"},
+	}}
+
+	a := New(Config{Model: model})
+	for _, name := range []string{"slow_a", "slow_b", "slow_c"} {
+		n := name
+		a.Tool(n, "slow tool", nil, func(ctx context.Context, args map[string]string) (string, error) {
+			time.Sleep(100 * time.Millisecond)
+			return n + "-result", nil
+		})
+	}
+
+	session := NewSession("concurrent-parallel")
+	start := time.Now()
+	resp, err := a.Run(context.Background(), session, "go")
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != "done" {
+		t.Errorf("text = %q", resp.Text)
+	}
+	if len(resp.ToolsCalled) != 3 {
+		t.Errorf("tools called = %d, want 3", len(resp.ToolsCalled))
+	}
+	// Concurrent: should complete in ~100-150ms, not ~300ms
+	if elapsed > 250*time.Millisecond {
+		t.Errorf("elapsed %v — tools may not be running concurrently", elapsed)
+	}
+}
+
+func TestConcurrentToolCallsApprovalShortCircuit(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCall{
+			{ID: "c1", Name: "safe", Arguments: `{}`},
+			{ID: "c2", Name: "dangerous", Arguments: `{}`},
+		}},
+	}}
+
+	safeCalled := false
+	a := New(Config{Model: model})
+	a.Tool("safe", "safe tool", nil, func(ctx context.Context, args map[string]string) (string, error) {
+		safeCalled = true
+		return "ok", nil
+	})
+	a.ToolWithApproval("dangerous", "needs approval", nil, func(ctx context.Context, args map[string]string) (string, error) {
+		return "should not run", nil
+	}, "High risk action")
+
+	session := NewSession("approval-test")
+	resp, err := a.Run(context.Background(), session, "do both")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.NeedsApproval {
+		t.Error("expected NeedsApproval=true")
+	}
+	if safeCalled {
+		t.Error("safe tool should NOT have been called — approval pre-scan should short-circuit")
+	}
+}
+
+func TestConcurrentToolCallPanicRecovery(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCall{
+			{ID: "c1", Name: "normal", Arguments: `{}`},
+			{ID: "c2", Name: "panicker", Arguments: `{}`},
+			{ID: "c3", Name: "normal2", Arguments: `{}`},
+		}},
+		{Text: "recovered"},
+	}}
+
+	a := New(Config{Model: model})
+	a.Tool("normal", "ok", nil, func(ctx context.Context, args map[string]string) (string, error) {
+		return "ok", nil
+	})
+	a.Tool("panicker", "panics", nil, func(ctx context.Context, args map[string]string) (string, error) {
+		panic("boom")
+	})
+	a.Tool("normal2", "ok2", nil, func(ctx context.Context, args map[string]string) (string, error) {
+		return "ok2", nil
+	})
+
+	session := NewSession("panic-recovery")
+	resp, err := a.Run(context.Background(), session, "run all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.ToolsCalled) != 3 {
+		t.Errorf("tools called = %d, want 3 (panicked tool should still be counted)", len(resp.ToolsCalled))
+	}
+	if resp.Text != "recovered" {
+		t.Errorf("text = %q, want %q", resp.Text, "recovered")
+	}
+}
+
+func TestConcurrentToolCallDedup(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCall{
+			{ID: "c1", Name: "fetch", Arguments: `{"url":"a"}`},
+			{ID: "c2", Name: "fetch", Arguments: `{"url":"a"}`},
+			{ID: "c3", Name: "fetch", Arguments: `{"url":"a"}`}, // 3rd dupe = blocked
+		}},
+		{Text: "done"},
+	}}
+
+	var callCount atomic.Int32
+	a := New(Config{Model: model})
+	a.Tool("fetch", "fetch", nil, func(ctx context.Context, args map[string]string) (string, error) {
+		callCount.Add(1)
+		return "fetched", nil
+	})
+
+	session := NewSession("dedup-test")
+	resp, err := a.Run(context.Background(), session, "fetch three times")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != "done" {
+		t.Errorf("text = %q", resp.Text)
+	}
+	// First 2 allowed, 3rd blocked by dedup
+	if got := callCount.Load(); got != 2 {
+		t.Errorf("call count = %d, want 2 (3rd should be deduped)", got)
+	}
+}
+
+// ── Phase 2: Async Post-Processing ────────────────────────
+
+func TestAsyncPostProcess(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{{Text: "hello"}}}
+	saved := make(chan bool, 1)
+	store := &mockStorage{
+		saveFn: func(ctx context.Context, s *Session) error {
+			time.Sleep(50 * time.Millisecond) // simulate slow save
+			saved <- true
+			return nil
+		},
+	}
+
+	a := New(Config{Model: model, Storage: store})
+	a.asyncPostProcess = true
+
+	session := NewSession("async-test")
+	start := time.Now()
+	resp, err := a.Run(context.Background(), session, "hi")
+	returnTime := time.Since(start)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != "hello" {
+		t.Errorf("text = %q", resp.Text)
+	}
+
+	// Response should return before save completes
+	if returnTime > 40*time.Millisecond {
+		t.Errorf("Run returned in %v — expected < 40ms (save takes 50ms)", returnTime)
+	}
+
+	// PostProcessDone should exist
+	if resp.PostProcessDone == nil {
+		t.Fatal("PostProcessDone channel is nil")
+	}
+
+	// Wait for post-processing to finish
+	select {
+	case <-resp.PostProcessDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("post-processing did not complete in time")
+	}
+
+	// Verify save was called
+	select {
+	case <-saved:
+	default:
+		t.Error("storage.Save was never called")
+	}
+}
+
+func TestAsyncPostProcessPanicRecovery(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{{Text: "hello"}}}
+
+	a := New(Config{Model: model})
+	a.asyncPostProcess = true
+	a.memory = &panicMemory{}
+
+	session := NewSession("async-panic")
+	resp, err := a.Run(context.Background(), session, "hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should not crash — panic is recovered in the goroutine
+	select {
+	case <-resp.PostProcessDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("post-processing goroutine never completed (panic not recovered?)")
+	}
+}
+
+func TestSyncPostProcessDefault(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{{Text: "hello"}}}
+
+	a := New(Config{Model: model})
+	// asyncPostProcess is false by default
+
+	session := NewSession("sync-default")
+	resp, err := a.Run(context.Background(), session, "hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.PostProcessDone != nil {
+		t.Error("PostProcessDone should be nil in sync mode")
+	}
+}
+
+// ── Test helpers for Phase 2 ────────────────────────────────
+
+type mockStorage struct {
+	saveFn func(ctx context.Context, s *Session) error
+}
+
+func (m *mockStorage) Save(ctx context.Context, s *Session) error {
+	if m.saveFn != nil {
+		return m.saveFn(ctx, s)
+	}
+	return nil
+}
+func (m *mockStorage) Load(ctx context.Context, id string) (*Session, error) {
+	return NewSession(id), nil
+}
+func (m *mockStorage) Delete(ctx context.Context, id string) error { return nil }
+func (m *mockStorage) List(ctx context.Context, limit int) ([]*Session, error) {
+	return nil, nil
+}
+
+type panicMemory struct{}
+
+func (p *panicMemory) Extract(ctx context.Context, session *Session, userMessage, assistantReply string) {
+	panic("memory panic!")
 }
