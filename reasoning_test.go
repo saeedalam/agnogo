@@ -244,6 +244,70 @@ func TestReasoningStepsInResponse(t *testing.T) {
 	}
 }
 
+// ── Multi-Turn Context ──────────────────────────────────────────────
+
+func TestCoTReasoningIncludesSessionHistory(t *testing.T) {
+	var capturedMessages []Message
+
+	// Mock model that captures messages it receives
+	model := &mockModelCapture{
+		capturedMessages: &capturedMessages,
+		response:         `{"title":"Done","result":"answer","next_action":"final_answer","confidence":0.9}`,
+	}
+
+	session := NewSession("multi-turn")
+	session.AddMessage("user", "What is Go?")
+	session.AddMessage("assistant", "Go is a programming language.")
+
+	cfg := &ReasoningConfig{Enabled: true, MinSteps: 1, MaxSteps: 2}
+	runCoTReasoning(context.Background(), cfg, model, "Tell me more about Go", session)
+
+	// Messages should include session history
+	if len(capturedMessages) < 4 {
+		t.Fatalf("expected >= 4 messages (system + history + user), got %d", len(capturedMessages))
+	}
+	// First should be system prompt
+	if capturedMessages[0].Role != "system" {
+		t.Errorf("first message role = %q, want system", capturedMessages[0].Role)
+	}
+	// History should be present
+	foundHistory := false
+	for _, m := range capturedMessages {
+		if m.Content == "Go is a programming language." {
+			foundHistory = true
+			break
+		}
+	}
+	if !foundHistory {
+		t.Error("session history not included in reasoning messages")
+	}
+}
+
+type mockModelCapture struct {
+	capturedMessages *[]Message
+	response         string
+}
+
+func (m *mockModelCapture) ChatCompletion(_ context.Context, messages []Message, _ []map[string]any) (*ModelResponse, error) {
+	*m.capturedMessages = make([]Message, len(messages))
+	copy(*m.capturedMessages, messages)
+	return &ModelResponse{Text: m.response}, nil
+}
+
+// ── Extract Thinking Edge Cases ─────────────────────────────────────
+
+func TestExtractThinkingPreferLongerTag(t *testing.T) {
+	// Should match <thinking> not <think> when both tag patterns are in text
+	text := "<thinking>deep analysis</thinking>The result."
+	thinking, answer := extractThinking(text)
+	if thinking != "deep analysis" {
+		t.Errorf("thinking = %q", thinking)
+	}
+	if answer != "The result." {
+		t.Errorf("answer = %q", answer)
+	}
+}
+
 // ── Disabled Reasoning ──────────────────────────────────────────────
 
 func TestReasoningDisabled(t *testing.T) {

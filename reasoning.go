@@ -20,7 +20,7 @@ import (
 // Usage:
 //
 //	agent := agnogo.Agent("...", agnogo.Reasoning)                        // default CoT
-//	agent := agnogo.Agent("...", agnogo.WithReasoning(agnogo.ReasoningConfig{
+//	agent := agnogo.Agent("...", agnogo.WithReasoningConfig(agnogo.ReasoningConfig{
 //	    Enabled: true,
 //	    Mode:    agnogo.ReasoningNative,  // for O1/O3/Claude thinking
 //	}))
@@ -113,7 +113,7 @@ func runReasoning(ctx context.Context, cfg *ReasoningConfig, model ModelProvider
 		slog.Debug("agnogo: native reasoning unavailable, falling back to CoT")
 	}
 
-	return runCoTReasoning(ctx, cfg, reasoningModel, userMessage)
+	return runCoTReasoning(ctx, cfg, reasoningModel, userMessage, session)
 }
 
 // ── Native Reasoning Detection ───────────────────────────────────────
@@ -140,9 +140,12 @@ func runNativeReasoning(ctx context.Context, model ModelProvider, userMessage st
 		return nil
 	}
 
-	messages := []Message{
-		{Role: "user", Content: userMessage},
+	// Include session history for multi-turn context
+	var messages []Message
+	if session != nil {
+		messages = append(messages, session.GetHistory()...)
 	}
+	messages = append(messages, Message{Role: "user", Content: userMessage})
 
 	resp, err := native.Reason(ctx, messages)
 	if err != nil {
@@ -176,8 +179,8 @@ func runNativeReasoning(ctx context.Context, model ModelProvider, userMessage st
 // extractThinking splits response text into thinking and answer parts.
 // Handles <think>...</think>, <thinking>...</thinking>, and raw text.
 func extractThinking(text string) (thinking, answer string) {
-	// Try <think>...</think>
-	for _, tag := range []string{"think", "thinking"} {
+	// Try <thinking>...</thinking> first (longer match), then <think>...</think>
+	for _, tag := range []string{"thinking", "think"} {
 		openTag := "<" + tag + ">"
 		closeTag := "</" + tag + ">"
 		if idx := strings.Index(text, openTag); idx >= 0 {
@@ -230,7 +233,7 @@ Rules:
 }
 
 // runCoTReasoning executes multi-step chain-of-thought reasoning.
-func runCoTReasoning(ctx context.Context, cfg *ReasoningConfig, model ModelProvider, userMessage string) ([]ReasoningStep, string) {
+func runCoTReasoning(ctx context.Context, cfg *ReasoningConfig, model ModelProvider, userMessage string, session *Session) ([]ReasoningStep, string) {
 	minSteps := cfg.MinSteps
 	if minSteps <= 0 {
 		minSteps = 2
@@ -243,8 +246,12 @@ func runCoTReasoning(ctx context.Context, cfg *ReasoningConfig, model ModelProvi
 	var steps []ReasoningStep
 	messages := []Message{
 		{Role: "system", Content: cotPrompt(minSteps, maxSteps)},
-		{Role: "user", Content: userMessage},
 	}
+	// Include session history for multi-turn context
+	if session != nil {
+		messages = append(messages, session.GetHistory()...)
+	}
+	messages = append(messages, Message{Role: "user", Content: userMessage})
 
 	for i := 0; i < maxSteps; i++ {
 		if ctx.Err() != nil {
@@ -257,11 +264,7 @@ func runCoTReasoning(ctx context.Context, cfg *ReasoningConfig, model ModelProvi
 			break
 		}
 
-		text := strings.TrimSpace(resp.Text)
-		text = strings.TrimPrefix(text, "```json")
-		text = strings.TrimPrefix(text, "```")
-		text = strings.TrimSuffix(text, "```")
-		text = strings.TrimSpace(text)
+		text := extractJSON(resp.Text)
 
 		var step ReasoningStep
 		if err := json.Unmarshal([]byte(text), &step); err != nil {
