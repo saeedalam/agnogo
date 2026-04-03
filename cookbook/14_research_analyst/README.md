@@ -1,122 +1,54 @@
 # AI Research Analyst
 
-A full-featured research pipeline that demonstrates every major agnogo capability in a single, realistic project.
+An agent that researches any question and writes a report. Read `main.go` top to bottom — it's a story in 6 chapters.
 
-## What It Does
+## The Story
 
-Takes any research question, plans a strategy, gathers data from multiple sources in parallel, synthesizes findings, refines iteratively, pauses for human review, and produces a formatted report — while learning user preferences across sessions.
+**Chapter 1: The Agents** — Four specialists, each with a clear role. The planner thinks before acting (reasoning). The researcher hunts for facts (reliability). The editor polishes. The formatter delivers.
 
-## Architecture
-
+**Chapter 2: The Pipeline** — Seven acts, read like a screenplay:
 ```
-                    ┌─────────────┐
-                    │   Question   │
-                    └──────┬──────┘
-                           │
-                    ┌──────▼──────┐
-                    │    Plan     │  ← Advanced Reasoning (CoT / Native)
-                    └──────┬──────┘
-                           │
-              ┌────────────┼────────────┐
-              │            │            │
-        ┌─────▼────┐ ┌────▼─────┐ ┌────▼──────┐
-        │   Web    │ │   News   │ │ Technical │  ← Parallel Research
-        │ Research │ │ Analysis │ │  Review   │
-        └─────┬────┘ └────┬─────┘ └────┬──────┘
-              │            │            │
-              └────────────┼────────────┘
-                           │
-                    ┌──────▼──────┐
-                    │ Synthesize  │  ← Pure Go (WfFunc, no LLM)
-                    └──────┬──────┘
-                           │
-                    ┌──────▼──────┐
-                    │   Refine    │  ← Loop (iterative improvement)
-                    └──────┬──────┘
-                           │
-                    ┌──────▼──────┐
-                    │ Depth Check │  ← Condition (expand if too short)
-                    └──────┬──────┘
-                           │
-                    ┌──────▼──────┐
-                    │   Review    │  ← HITL (human approval)
-                    └──────┬──────┘
-                           │
-                    ┌──────▼──────┐
-                    │   Format    │  ← Router (summary or detailed)
-                    └──────┬──────┘
-                           │
-                    ┌──────▼──────┐
-                    │   Report    │
-                    └─────────────┘
+Plan → Research (3 in parallel) → Merge (pure Go) → Polish (loop) → Quality gate → Human review → Deliver
 ```
 
-## Features Used
+**Chapter 3: Memory** — First conversation: knows nothing. Second conversation: remembers your name, what you researched, and how you like your reports.
 
-| Feature | Where | Why |
-|---------|-------|-----|
-| `WfSequence` | Main pipeline | Sequential orchestration |
-| `WfParallel` | Research gathering | 3 sources searched concurrently |
-| `WfFunc` | Synthesize step | Merge results without LLM call |
-| `WfLoop` | Refinement | Iterative quality improvement |
-| `WfCondition` | Depth check | Conditional deep dive |
-| `WfRoute` | Output format | Route based on user preference |
-| `WithConfirmation` | Review step | Human approves before publishing |
-| `ReasoningConfig` | Planning agent | Multi-step research strategy |
-| `Reliable()` | Research agents | Hallucination guard + confidence |
-| `LearningMachine` | Across sessions | Remembers preferences + entities |
-| `UserProfileStore` | User prefs | Name, role, format preference |
-| `EntityMemoryStore` | Topic knowledge | Facts about researched subjects |
-| `SessionContextStore` | Session summary | What was researched + decided |
-| `ImageFromFile` | Optional | Analyze charts/screenshots |
-| `AsyncPostProcess` | Post-run | Save learnings in background |
-| `CostBudget` | Safety | $2/run, $10/session limit |
-| `NewEval` | Testing | Automated quality assertions |
+**Chapter 4: Go** — One function call starts everything.
 
-## Running
+**Chapter 5: The Human Gate** — The pipeline pauses. You review. You approve or cancel.
+
+**Chapter 6: The Report** — Done.
+
+## Features Used (Naturally)
+
+```
+Chapter 1       → Agent(), Reliable(), WithReasoningConfig(), WithBudget()
+Chapter 2, Act 1 → WfStep (agent step)
+Chapter 2, Act 2 → WfParallel (concurrent research)
+Chapter 2, Act 3 → WfFunc (pure Go, no LLM)
+Chapter 2, Act 4 → WfLoop (iterative refinement)
+Chapter 2, Act 5 → WfCondition (quality gate)
+Chapter 2, Act 6 → WithConfirmation (HITL pause/resume)
+Chapter 2, Act 7 → WfRoute (format selection from memory)
+Chapter 3       → LearningMachine, UserProfile, SessionContext, EntityMemory
+Chapter 4       → AddMediaMessage (optional images), AsyncPostProcess
+Chapter 5       → ErrWorkflowPaused, ResumeWorkflow
+Chapter 6       → Response.ReasoningSteps
+```
+
+## Run
 
 ```bash
-# Set your API key
 export OPENAI_API_KEY=sk-...
-
-# Run the research pipeline
-go run main.go "Research the competitive landscape of AI agent frameworks"
-
-# Run with a custom question
-go run main.go "Compare Kubernetes vs Docker Swarm for production deployments"
-
-# Run quality tests (requires API key)
-go test -v -timeout 120s
+go run main.go "What makes Go better than Python for AI agents?"
+go run main.go "Compare Kubernetes vs Docker Swarm"
+go run main.go "Research the history of neural networks"
 ```
 
 ## Files
 
-- `main.go` — Full WorkflowEngine pipeline (recommended)
-- `graph_version.go` — Same pipeline using Graph API (simpler alternative)
-- `eval_test.go` — Automated quality tests using eval framework
-
-## Customization
-
-**Change the output format:**
-```go
-session.SetMemory("report_format", "summary") // or "detailed"
-```
-
-**Add your own research sources:**
-```go
-agnogo.WfParallel("gather",
-    agnogo.WfStep("web", webAgent),
-    agnogo.WfStep("arxiv", arxivAgent),     // add academic papers
-    agnogo.WfStep("github", githubAgent),   // add code analysis
-)
-```
-
-**Adjust refinement depth:**
-```go
-agnogo.WfLoop("refine", refineStep, func(out *agnogo.StepOutput, i int) bool {
-    return i >= 4 // refine up to 5 times
-}).WithMaxIterations(5)
-```
-
-**Skip human review:**
-Remove `.WithConfirmation()` from the review step.
+| File | What | Read it to learn |
+|------|------|-----------------|
+| `main.go` | The full pipeline | How to build a production agent workflow |
+| `graph_version.go` | Same thing, simpler API | When to use Graph vs WorkflowEngine |
+| `eval_test.go` | Quality tests | How to test agent output automatically |
