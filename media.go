@@ -223,6 +223,6 @@ func mimeFromExtension(path string) string {
 	case ".mp4":
 		return "video/mp4"
 	default:
-		return "application/octet-stream"
+		return "" // unknown — let detectImageMime try magic bytes
 	}
 }

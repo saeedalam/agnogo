@@ -105,7 +105,7 @@ func TestMimeFromExtension(t *testing.T) {
 		"data.json":  "application/json",
 		"song.mp3":   "audio/mpeg",
 		"song.wav":   "audio/wav",
-		"unknown.xyz": "application/octet-stream",
+		"unknown.xyz": "",
 	}
 	for path, want := range cases {
 		if got := mimeFromExtension(path); got != want {

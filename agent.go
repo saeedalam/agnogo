@@ -217,15 +217,17 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 
 	dbg.printRunStart(runID, session.ID)
 
-	// Input guardrails
-	if err := runGuardrails(ctx, a.inputGuards, session, userMessage); err != nil {
-		if a.trace != nil && a.trace.OnGuardrail != nil {
-			a.trace.OnGuardrail("input", "input", true)
+	// Input guardrails (skip for empty userMessage — used with AddMediaMessage)
+	if userMessage != "" {
+		if err := runGuardrails(ctx, a.inputGuards, session, userMessage); err != nil {
+			if a.trace != nil && a.trace.OnGuardrail != nil {
+				a.trace.OnGuardrail("input", "input", true)
+			}
+			dbg.printGuardrail("input", "input", true)
+			metrics.Duration = time.Since(runStart)
+			dbg.printRunEnd(runID, metrics)
+			return &Response{Text: err.Error(), Metrics: metrics}, nil
 		}
-		dbg.printGuardrail("input", "input", true)
-		metrics.Duration = time.Since(runStart)
-		dbg.printRunEnd(runID, metrics)
-		return &Response{Text: err.Error(), Metrics: metrics}, nil
 	}
 
 	// Build messages
@@ -254,9 +256,9 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 		messages = append(messages, Message{Role: "user", Content: userMessage})
 	}
 
-	// Reasoning (chain-of-thought before responding)
+	// Reasoning (chain-of-thought before responding — skip for empty userMessage)
 	var reasoningSteps []ReasoningStep
-	if a.reasoning != nil && a.reasoning.Enabled {
+	if a.reasoning != nil && a.reasoning.Enabled && userMessage != "" {
 		var reasoningContext string
 		reasoningSteps, reasoningContext = runReasoning(ctx, a.reasoning, a.model, userMessage, session)
 		if reasoningContext != "" {

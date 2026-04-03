@@ -488,29 +488,27 @@ func loadEntities(session *Session) []EntityMemory {
 }
 
 func mergeEntities(existing, updates []EntityMemory) []EntityMemory {
-	byID := make(map[string]*EntityMemory)
-	for i := range existing {
-		byID[existing[i].EntityID] = &existing[i]
+	byID := make(map[string]int) // entity_id → index in result
+	result := make([]EntityMemory, len(existing))
+	copy(result, existing)
+	for i, e := range result {
+		byID[e.EntityID] = i
 	}
 
 	for _, update := range updates {
-		if e, ok := byID[update.EntityID]; ok {
+		if idx, ok := byID[update.EntityID]; ok {
 			// Merge facts and events (deduplicate)
-			e.Facts = dedup(append(e.Facts, update.Facts...))
-			e.Events = dedup(append(e.Events, update.Events...))
+			result[idx].Facts = dedup(append(result[idx].Facts, update.Facts...))
+			result[idx].Events = dedup(append(result[idx].Events, update.Events...))
 			if update.EntityType != "" {
-				e.EntityType = update.EntityType
+				result[idx].EntityType = update.EntityType
 			}
 		} else {
-			copy := update
-			byID[update.EntityID] = &copy
+			byID[update.EntityID] = len(result)
+			result = append(result, update)
 		}
 	}
 
-	result := make([]EntityMemory, 0, len(byID))
-	for _, e := range byID {
-		result = append(result, *e)
-	}
 	return result
 }
 
