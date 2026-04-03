@@ -634,6 +634,65 @@ func TestAgentStepSkipIf(t *testing.T) {
 	}
 }
 
+// ── Parallel Data isolation ──────────────────────────────────────────
+
+func TestParallelStepsDataIsolation(t *testing.T) {
+	// Each parallel step writes to Data — must not race
+	wf := NewWorkflowEngine("test",
+		WfParallel("writers",
+			WfFunc("writer_a", func(ctx context.Context, input *StepInput) (*StepOutput, error) {
+				if input.Data != nil {
+					input.Data["writer_a"] = "value_a"
+				}
+				time.Sleep(10 * time.Millisecond)
+				return &StepOutput{Content: "a-done", Success: true}, nil
+			}),
+			WfFunc("writer_b", func(ctx context.Context, input *StepInput) (*StepOutput, error) {
+				if input.Data != nil {
+					input.Data["writer_b"] = "value_b"
+				}
+				time.Sleep(10 * time.Millisecond)
+				return &StepOutput{Content: "b-done", Success: true}, nil
+			}),
+		),
+	)
+
+	output, err := wf.RunWorkflow(ctx(), NewSession("data-iso"), "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(output.Nested) != 2 {
+		t.Errorf("nested = %d, want 2", len(output.Nested))
+	}
+}
+
+// ── Resume denied ───────────────────────────────────────────────────
+
+func TestStepsResumeDenied(t *testing.T) {
+	wf := NewWorkflowEngine("test",
+		WfSequence("main",
+			WfStep("step1", testAgent("first")),
+			WfStep("step2", testAgent("should-not-run")).WithConfirmation(),
+		),
+	)
+
+	session := NewSession("deny")
+	_, err := wf.RunWorkflow(ctx(), session, "go")
+	var paused *ErrWorkflowPaused
+	if !errors.As(err, &paused) {
+		t.Fatalf("expected pause, got %v", err)
+	}
+
+	// Resume with denial
+	output, err := wf.ResumeWorkflow(ctx(), session, paused.Paused, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output.Content != "Step was not approved." {
+		t.Errorf("content = %q, want denial message", output.Content)
+	}
+}
+
 // ── Helper ──────────────────────────────────────────────────────────
 
 func ctx() context.Context { return context.Background() }

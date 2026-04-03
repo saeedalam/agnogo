@@ -188,12 +188,6 @@ func (s *Steps) RunStep(ctx context.Context, input *StepInput) (*StepOutput, err
 	if input.Data != nil {
 		if resumeIdx, ok := input.Data["_resume_index"].(int); ok {
 			startIndex = resumeIdx
-			// Restore previous content from the last completed step
-			if len(nested) == 0 && prevContent == "" {
-				for _, out := range prevOutputs {
-					prevContent = out.Content
-				}
-			}
 		}
 	}
 
@@ -289,11 +283,20 @@ func (p *ParallelSteps) RunStep(ctx context.Context, input *StepInput) (*StepOut
 				parallelSession = cloneSession(input.Session, input.Session.ID+"_par_"+s.StepName())
 			}
 
+			// Copy Data map to prevent concurrent map writes
+			var dataCopy map[string]any
+			if input.Data != nil {
+				dataCopy = make(map[string]any, len(input.Data))
+				for k, v := range input.Data {
+					dataCopy[k] = v
+				}
+			}
+
 			parallelInput := &StepInput{
 				Input:       input.Input,
 				PrevContent: input.PrevContent,
 				PrevOutputs: input.PrevOutputs,
-				Data:        input.Data,
+				Data:        dataCopy,
 				Session:     parallelSession,
 			}
 
