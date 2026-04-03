@@ -58,7 +58,8 @@ type Core struct {
 	toolOutputValidator  ToolOutputValidator
 	confidenceScorer     ConfidenceScorer
 
-	asyncPostProcess bool // fire-and-forget post-processing (memory, save, summarize)
+	asyncPostProcess bool              // fire-and-forget post-processing (memory, save, summarize)
+	learning         *LearningMachine  // self-improving agent (optional)
 }
 
 // Config configures a new Core.
@@ -238,6 +239,14 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 		systemPrompt += a.tools.SystemPrompt()
 	}
 
+	// Learning: inject recalled context from previous interactions
+	if a.learning != nil {
+		learnedContext := a.learning.BuildContext(ctx, session)
+		if learnedContext != "" {
+			systemPrompt += "\n" + learnedContext
+		}
+	}
+
 	messages := []Message{{Role: "system", Content: systemPrompt}}
 	messages = append(messages, session.GetHistory()...)
 	if userMessage != "" {
@@ -371,6 +380,13 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 			postProcess := func(pctx context.Context) {
 				if a.memory != nil {
 					a.memory.Extract(pctx, session, userMessage, text)
+				}
+				if a.learning != nil {
+					// Include the final assistant response in learning extraction
+					learnMsgs := make([]Message, len(messages), len(messages)+1)
+					copy(learnMsgs, messages)
+					learnMsgs = append(learnMsgs, Message{Role: "assistant", Content: text})
+					a.learning.Process(pctx, session, learnMsgs)
 				}
 				if a.storage != nil {
 					saveErr := a.storage.Save(pctx, session)

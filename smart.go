@@ -65,6 +65,7 @@ type smartConfig struct {
 	summarizeKeepRecent int
 	unsafe              bool
 	asyncPostProcess    bool
+	learning            *LearningMachine
 	costBudget          *CostBudget
 	piiConfig           *PIIConfig
 	toolValidator       *ToolValidator
@@ -183,6 +184,7 @@ func Agent(instructions string, opts ...Option) *Core {
 	a.toolOutputValidator = sc.toolOutputValidator
 	a.confidenceScorer = sc.confidenceScorer
 	a.asyncPostProcess = sc.asyncPostProcess
+	a.learning = sc.learning
 
 	if sc.piiConfig != nil {
 		if sc.piiScanner != nil {
