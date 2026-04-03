@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ── Multi-Modal Media Types ──────────────────────────────────────────
@@ -113,18 +114,28 @@ func resolveMediaBytes(url, path string, content []byte, mimeType string) ([]byt
 	}
 
 	if url != "" {
-		resp, err := http.Get(url) //nolint:gosec // user-provided URL
+		client := &http.Client{Timeout: 30 * time.Second}
+		resp, err := client.Get(url) //nolint:gosec // user-provided URL
 		if err != nil {
 			return nil, "", fmt.Errorf("agnogo: fetch media URL %q: %w", url, err)
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, "", fmt.Errorf("agnogo: fetch media URL %q: HTTP %d", url, resp.StatusCode)
+		}
 		data, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, "", fmt.Errorf("agnogo: read media response: %w", err)
 		}
 		if mimeType == "" {
-			mimeType = resp.Header.Get("Content-Type")
-			if mimeType == "" {
+			ct := resp.Header.Get("Content-Type")
+			// Strip charset and parameters: "image/jpeg; charset=utf-8" → "image/jpeg"
+			if idx := strings.Index(ct, ";"); idx >= 0 {
+				ct = strings.TrimSpace(ct[:idx])
+			}
+			if ct != "" {
+				mimeType = ct
+			} else {
 				mimeType = detectImageMime(data)
 			}
 		}

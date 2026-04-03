@@ -53,7 +53,12 @@ func formatOpenAIMessages(messages []Message) []map[string]any {
 					parts = append(parts, part)
 				}
 			}
-			msg["content"] = parts
+			// Fallback: if all media failed to load, use text-only
+			if len(parts) == 0 {
+				msg["content"] = m.Content
+			} else {
+				msg["content"] = parts
+			}
 		} else {
 			msg["content"] = m.Content
 		}
@@ -384,7 +389,12 @@ func formatAnthropicRequest(model string, cfg ModelConfig, messages []Message, t
 					},
 				})
 			}
-			msg = map[string]any{"role": m.Role, "content": parts}
+			// Fallback: if all media failed, use text-only
+			if len(parts) == 0 {
+				msg = map[string]any{"role": m.Role, "content": m.Content}
+			} else {
+				msg = map[string]any{"role": m.Role, "content": parts}
+			}
 		} else {
 			msg = map[string]any{"role": m.Role, "content": m.Content}
 		}

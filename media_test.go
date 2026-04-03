@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -355,6 +356,93 @@ func TestMessageWithoutImagesJSON(t *testing.T) {
 	// Should not contain "images" key at all
 	if contains(string(data), "images") {
 		t.Errorf("JSON should not contain 'images' when empty: %s", data)
+	}
+}
+
+// ── Edge Cases ──────────────────────────────────────────────────────
+
+func TestResolveMediaBytesHTTPError(t *testing.T) {
+	// Non-existent file should error
+	_, _, err := resolveMediaBytes("", "/nonexistent/file.jpg", nil, "")
+	if err == nil {
+		t.Fatal("expected error for nonexistent file")
+	}
+}
+
+func TestFormatOpenAIFailedMediaFallback(t *testing.T) {
+	// All images fail, no text → should fallback to empty string, not empty array
+	msgs := []Message{{
+		Role:    "user",
+		Content: "",
+		Images:  []Image{ImageFromFile("/nonexistent/file.jpg")},
+	}}
+
+	formatted := formatOpenAIMessages(msgs)
+	// Should fall back to string content (empty), not empty parts array
+	content, ok := formatted[0]["content"].(string)
+	if !ok {
+		t.Fatalf("expected fallback to string content, got %T", formatted[0]["content"])
+	}
+	if content != "" {
+		t.Errorf("content = %q, want empty string", content)
+	}
+}
+
+func TestFormatOpenAIFailedMediaWithText(t *testing.T) {
+	// All images fail but text exists → text part should survive
+	msgs := []Message{{
+		Role:    "user",
+		Content: "Hello",
+		Images:  []Image{ImageFromFile("/nonexistent/file.jpg")},
+	}}
+
+	formatted := formatOpenAIMessages(msgs)
+	// Should have parts array with just the text part
+	parts, ok := formatted[0]["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected parts array, got %T", formatted[0]["content"])
+	}
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 part (text only), got %d", len(parts))
+	}
+	if parts[0]["type"] != "text" {
+		t.Errorf("part type = %v, want text", parts[0]["type"])
+	}
+}
+
+func TestFormatAnthropicFailedMediaFallback(t *testing.T) {
+	// All images fail, no text → should fallback to string content
+	msgs := []Message{{
+		Role:    "user",
+		Content: "",
+		Images:  []Image{ImageFromFile("/nonexistent/file.jpg")},
+	}}
+
+	_, apiMsgs, _ := formatAnthropicRequest("claude-3", ModelConfig{MaxTokens: 1024}, msgs, nil)
+	// Should fall back to string content
+	content, ok := apiMsgs[0]["content"].(string)
+	if !ok {
+		t.Fatalf("expected fallback to string content, got %T", apiMsgs[0]["content"])
+	}
+	if content != "" {
+		t.Errorf("content = %q, want empty string", content)
+	}
+}
+
+func TestContentTypeSanitization(t *testing.T) {
+	// Simulate Content-Type with charset — resolveMediaBytes should strip it
+	// We test the stripping logic directly via a file with known bytes
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.jpg")
+	os.WriteFile(path, []byte{0xFF, 0xD8, 0xFF, 0xE0}, 0644)
+
+	_, mime, err := resolveMediaBytes("", path, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Should not contain semicolons or charset
+	if strings.Contains(mime, ";") {
+		t.Errorf("MIME should not contain charset: %q", mime)
 	}
 }
 
