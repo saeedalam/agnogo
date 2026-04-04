@@ -63,8 +63,9 @@ func main() {
 	// - confidence scoring flags uncertain answers
 	// - cost budget prevents runaway API spending
 	researcher := agnogo.Agent(
-		`You are a meticulous research analyst. You find facts, cite sources,
-		 and never make things up. If you don't know, you say so.`,
+		`You are a research analyst. Given a research topic, write a thorough
+		 analysis with facts and evidence. Output ONLY the analysis — no
+		 meta-commentary. If you don't know something, say so.`,
 		agnogo.Reliable(),
 		agnogo.WithBudget(agnogo.CostBudget{
 			MaxPerRun: 1.00, // $1 max per research call
@@ -73,8 +74,9 @@ func main() {
 
 	// The editor improves whatever they're given.
 	editor := agnogo.Agent(
-		`You are a sharp editor. You fix errors, fill gaps, sharpen arguments,
-		 and make the report actually worth reading.`,
+		`You are an editor. You receive a draft report and output an improved
+		 version. Fix errors, fill gaps, sharpen arguments. Output ONLY the
+		 improved report — no commentary about the changes you made.`,
 	)
 
 	// Two formatters — the router picks one based on user preference.
@@ -83,8 +85,10 @@ func main() {
 		 one page max. Busy people love you.`,
 	)
 	fullWriter := agnogo.Agent(
-		`You write thorough analytical reports. Sections, evidence,
-		 comparisons, nuance. Researchers love you.`,
+		`You are a report writer. You receive raw research data and rewrite
+		 it as a polished, detailed analytical report. Output ONLY the final
+		 report — no commentary, no meta-text, no "here is your report".
+		 Use markdown: ## sections, bullet points, comparisons, evidence.`,
 	)
 
 	// ─────────────────────────────────────────────────────────────
