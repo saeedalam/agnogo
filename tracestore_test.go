@@ -613,6 +613,75 @@ func TestReplayResponseUnchanged(t *testing.T) {
 	}
 }
 
+// ── Fix: JSON Round-Trip Duration ────────────────────────────────────
+
+func TestFileTraceStoreRoundTripDuration(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewFileTraceStore(dir)
+	ctx := context.Background()
+
+	original := &RunTrace{
+		RunID:    "run_roundtrip",
+		Duration: 2500 * time.Millisecond,
+		Spans: []*Span{
+			{Name: "call", Kind: SpanModel, Duration: 1200 * time.Millisecond},
+		},
+	}
+	store.SaveTrace(ctx, original)
+	loaded, err := store.LoadTrace(ctx, "run_roundtrip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Duration should survive round-trip as milliseconds, not become nanoseconds
+	if loaded.Duration < 2*time.Second || loaded.Duration > 3*time.Second {
+		t.Errorf("RunTrace.Duration = %v, want ~2.5s (got nanoseconds?)", loaded.Duration)
+	}
+	if loaded.Spans[0].Duration < 1*time.Second || loaded.Spans[0].Duration > 1500*time.Millisecond {
+		t.Errorf("Span.Duration = %v, want ~1.2s", loaded.Spans[0].Duration)
+	}
+}
+
+// ── Fix: Replay doesn't mutate agent ────────────────────────────────
+
+func TestReplayDoesNotMutateAgent(t *testing.T) {
+	original := &RunTrace{RunID: "run_x", UserMessage: "hi"}
+	agent := New(Config{Model: &mockModel{responses: []ModelResponse{{Text: "hello"}}}})
+
+	// Set a trace on the agent
+	myCollector := NewSpanCollector()
+	agent.trace = myCollector.Trace()
+	origTrace := agent.trace
+
+	Replay(context.Background(), original, agent)
+
+	// Agent's trace should be restored
+	if agent.trace != origTrace {
+		t.Error("Replay mutated the agent's trace — should restore original")
+	}
+}
+
+// ── Fix: HasErrors checks nested spans ──────────────────────────────
+
+func TestHasErrorsNested(t *testing.T) {
+	sc := NewSpanCollector()
+	trace := sc.Trace()
+
+	// Reasoning with a child that has an error
+	trace.OnReasoning(ReasoningStep{Title: "Step 1", Confidence: 0.5}, 0)
+
+	// Manually inject error into nested span
+	sc.mu.Lock()
+	if sc.reasoningSpan != nil && len(sc.reasoningSpan.Children) > 0 {
+		sc.reasoningSpan.Children[0].Status = SpanError
+	}
+	sc.mu.Unlock()
+
+	rt := sc.Collect(nil)
+	if !rt.HasErrors {
+		t.Error("HasErrors should be true when nested child span has error")
+	}
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────
 
 func runID(i int) string {

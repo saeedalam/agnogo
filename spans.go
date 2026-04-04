@@ -254,6 +254,22 @@ func (rt *RunTrace) MarshalJSON() ([]byte, error) {
 	})
 }
 
+// UnmarshalJSON reads Duration from milliseconds (matching MarshalJSON).
+func (rt *RunTrace) UnmarshalJSON(data []byte) error {
+	type rtAlias RunTrace
+	aux := &struct {
+		*rtAlias
+		DurationMS int64 `json:"duration_ms"`
+	}{
+		rtAlias: (*rtAlias)(rt),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	rt.Duration = time.Duration(aux.DurationMS) * time.Millisecond
+	return nil
+}
+
 // ── SpanCollector ────────────────────────────────────────────────────
 
 // SpanCollector captures structured spans from Trace hooks.
@@ -305,9 +321,8 @@ func (sc *SpanCollector) SetSessionID(id string) {
 // Pass this to WithTrace() when creating an agent.
 func (sc *SpanCollector) Trace() *Trace {
 	return &Trace{
-		// Note: cost estimation uses gpt-4.1-mini pricing as default.
-		// The Trace API doesn't pass the model name, so we can't auto-detect.
-		// For accurate costs with other models, use NewCostTracker() directly.
+		// Cost estimation uses resp.Model for accurate per-provider pricing.
+		// Falls back to gpt-4.1-mini if the provider doesn't set Model.
 		OnModelCall: func(msgs []Message, resp *ModelResponse, dur time.Duration) {
 			// Capture user message from the first model call (for persistence/replay)
 			sc.mu.Lock()
@@ -492,13 +507,8 @@ func (sc *SpanCollector) Collect(resp *Response) *RunTrace {
 		sc.aggregate(rt, span)
 	}
 
-	// Check for errors
-	for _, span := range rt.Spans {
-		if span.Status == SpanError {
-			rt.HasErrors = true
-			break
-		}
-	}
+	// Check for errors (recursive — includes nested spans)
+	rt.HasErrors = hasSpanErrors(rt.Spans)
 
 	// Auto-save to trace store if configured
 	if sc.traceStore != nil && rt.RunID != "" {
@@ -507,6 +517,18 @@ func (sc *SpanCollector) Collect(resp *Response) *RunTrace {
 	}
 
 	return rt
+}
+
+func hasSpanErrors(spans []*Span) bool {
+	for _, s := range spans {
+		if s.Status == SpanError {
+			return true
+		}
+		if hasSpanErrors(s.Children) {
+			return true
+		}
+	}
+	return false
 }
 
 func (sc *SpanCollector) aggregate(rt *RunTrace, span *Span) {
@@ -555,6 +577,21 @@ func (k SpanKind) MarshalJSON() ([]byte, error) {
 	return json.Marshal("unknown")
 }
 
+func (k *SpanKind) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	for i, name := range spanKindNames {
+		if name == s {
+			*k = SpanKind(i)
+			return nil
+		}
+	}
+	*k = SpanModel // default
+	return nil
+}
+
 var spanStatusNames = [...]string{"ok", "error", "blocked"}
 
 func (s SpanStatus) MarshalJSON() ([]byte, error) {
@@ -564,7 +601,22 @@ func (s SpanStatus) MarshalJSON() ([]byte, error) {
 	return json.Marshal("unknown")
 }
 
-// DurationMS is used for JSON marshaling of Duration fields.
+func (s *SpanStatus) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err != nil {
+		return err
+	}
+	for i, name := range spanStatusNames {
+		if name == str {
+			*s = SpanStatus(i)
+			return nil
+		}
+	}
+	*s = SpanOK
+	return nil
+}
+
+// MarshalJSON serializes Span with Duration as milliseconds.
 func (s *Span) MarshalJSON() ([]byte, error) {
 	type spanAlias Span
 	return json.Marshal(&struct {
@@ -581,5 +633,21 @@ func (s *Span) MarshalJSON() ([]byte, error) {
 			return ""
 		}(),
 	})
+}
+
+// UnmarshalJSON reads Duration from milliseconds (matching MarshalJSON).
+func (s *Span) UnmarshalJSON(data []byte) error {
+	type spanAlias Span
+	aux := &struct {
+		*spanAlias
+		DurationMS int64 `json:"duration_ms"`
+	}{
+		spanAlias: (*spanAlias)(s),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	s.Duration = time.Duration(aux.DurationMS) * time.Millisecond
+	return nil
 }
 

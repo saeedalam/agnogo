@@ -58,7 +58,11 @@ func Replay(ctx context.Context, original *RunTrace, agent *Core) (*ReplayResult
 	sessionID := "replay-" + original.RunID
 	session := NewSession(sessionID)
 	sc := NewSpanCollector()
+
+	// Temporarily set trace on agent, restore original after
+	origTrace := agent.trace
 	agent.trace = sc.Trace()
+	defer func() { agent.trace = origTrace }()
 
 	// Run the same input through the new agent
 	resp, err := agent.Run(ctx, session, original.UserMessage)
