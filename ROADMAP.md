@@ -84,15 +84,19 @@ Every agent framework focuses on features. agnogo focuses on **reliability** —
 - `Response.ReasoningSteps` — steps persisted in response for analytics/UI
 - Session history included in reasoning context for multi-turn conversations
 
-### v1.0.1 — Structured Agent Tracing
+### v1.0.1 — Structured Agent Tracing + Trace Intelligence
 - `SpanCollector`: zero-config structured tracing for every `Run()`
 - Captures model calls (tokens, cost, duration), tool calls, guardrail checks, reasoning steps
 - `RunTrace.Print()`: human-readable trace tree
 - `RunTrace.JSON()`: machine-readable structured export
 - `OnReasoning` trace hook for chain-of-thought step visibility
 - Thread-safe for concurrent tool execution spans
-- `WithSpanCollector()` convenience option
-- No other Go agent framework has built-in structured tracing
+- `TraceStore` interface: persist traces across restarts (MemoryTraceStore built-in)
+- `TraceQuery`: find traces by cost, duration, session, errors, time window
+- Auto-save: `WithTraceStore()` on SpanCollector, auto-captures UserMessage + SessionID
+- `TraceAnalyzer`: CostSummary, DetectAnomalies (mean+2σ), ToolStats, ErrorReport
+- `Replay()`: re-run stored traces with different agents, get structured TraceDiff
+- No other Go agent framework has built-in trace intelligence
 
 ### v1.0.0 — Learning Machine
 - `LearningMachine` coordinates multiple `LearningStore` implementations

@@ -289,6 +289,17 @@ func (sc *SpanCollector) WithTraceStore(ts TraceStore) *SpanCollector {
 	return sc
 }
 
+// SetSessionID explicitly sets the session ID for trace persistence.
+// Useful when the agent doesn't have Storage configured (so OnSessionSave
+// never fires). Typically called before Run():
+//
+//	sc.SetSessionID(session.ID)
+func (sc *SpanCollector) SetSessionID(id string) {
+	sc.mu.Lock()
+	sc.sessionID = id
+	sc.mu.Unlock()
+}
+
 // Trace returns a *Trace that captures structured spans from all hook points.
 // Pass this to WithTrace() when creating an agent.
 func (sc *SpanCollector) Trace() *Trace {

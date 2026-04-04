@@ -591,7 +591,17 @@ sc.Collect(resp).Print()
   └─ [model]  call      1.2s  209 tok  $0.0001
 ```
 
-Built-in, zero-config, zero dependencies. Export as JSON for analytics. No other Go agent framework has this.
+Persist traces, query by cost/errors/session, detect anomalies, replay with different models:
+
+```go
+store := agnogo.NewMemoryTraceStore()
+sc := agnogo.NewSpanCollector().WithTraceStore(store) // auto-saves
+// ...later...
+anomalies, _ := agnogo.NewTraceAnalyzer(store).DetectAnomalies(ctx, since)
+result, _ := agnogo.Replay(ctx, problemTrace, betterAgent) // compare
+```
+
+Built-in, zero-config, zero dependencies. No other Go agent framework has this.
 
 ## Run Context (Dependency Injection)
 

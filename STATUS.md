@@ -297,6 +297,9 @@ These features exist only in agnogo and have no equivalent in the Python Agno li
 | `EntityMemoryStore` | External entity knowledge with fact/event deduplication |
 | `SpanCollector` / `RunTrace` | Structured agent tracing — model/tool/guardrail spans with timing, tokens, cost |
 | `RunTrace.Print()` / `.JSON()` | Human-readable trace tree + machine-readable JSON export |
+| `TraceStore` / `MemoryTraceStore` | Persist traces across restarts, query by cost/errors/session/time |
+| `TraceAnalyzer` | Cost summary, anomaly detection (mean+2σ), per-tool stats, error reports |
+| `Replay()` / `TraceDiff` | Re-run stored traces with different agents, structured comparison |
 | 19 utility tools | regex, base64, hash, uuid, time, env, template, yaml, xml, diff, archive, crypto, dns, tcp, markdown, pdf, image, cron, semver, metrics |
 
 ---

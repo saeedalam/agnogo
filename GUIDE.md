@@ -1606,3 +1606,160 @@ trace2 := sc.Collect(resp2)
 | `SpanKnowledge` | RAG search | query, duration |
 | `SpanApproval` | HITL request | tool, reason |
 | `SpanSession` | Session save | error |
+
+---
+
+## Trace Persistence
+
+Traces are in-memory by default. Add a `TraceStore` to persist them across restarts.
+
+### Setup
+
+```go
+store := agnogo.NewMemoryTraceStore()
+sc := agnogo.NewSpanCollector().WithTraceStore(store)
+agent := agnogo.Agent("...", agnogo.WithSpanCollector(sc))
+```
+
+Now every `Collect()` auto-saves the trace. The `UserMessage` and `SessionID` are captured automatically.
+
+### Query
+
+Find traces by cost, duration, session, errors, or time window:
+
+```go
+// Expensive runs
+expensive, _ := store.QueryTraces(ctx, agnogo.TraceQuery{MinCost: 0.05})
+
+// Failed runs
+hasErrors := true
+failed, _ := store.QueryTraces(ctx, agnogo.TraceQuery{HasErrors: &hasErrors})
+
+// Runs from a specific session
+session, _ := store.QueryTraces(ctx, agnogo.TraceQuery{SessionID: "booking-123"})
+
+// Last 24 hours, max 100
+recent, _ := store.QueryTraces(ctx, agnogo.TraceQuery{
+    Since: time.Now().Add(-24 * time.Hour),
+    Limit: 100,
+})
+```
+
+### Load a Specific Trace
+
+```go
+trace, _ := store.LoadTrace(ctx, "run_abc123")
+trace.Print() // replay what happened
+```
+
+### Custom Backend
+
+Implement `TraceStore` for your database:
+
+```go
+type TraceStore interface {
+    SaveTrace(ctx context.Context, trace *RunTrace) error
+    LoadTrace(ctx context.Context, runID string) (*RunTrace, error)
+    QueryTraces(ctx context.Context, q TraceQuery) ([]*RunTrace, error)
+    DeleteTrace(ctx context.Context, runID string) error
+}
+```
+
+---
+
+## Trace Analytics
+
+Analyze stored traces for cost trends, anomalies, and tool statistics.
+
+### Cost Summary
+
+```go
+analyzer := agnogo.NewTraceAnalyzer(store)
+summary, _ := analyzer.CostSummary(ctx, time.Now().Add(-24*time.Hour))
+
+fmt.Printf("Runs: %d\n", summary.RunCount)
+fmt.Printf("Total: $%.4f\n", summary.TotalCost)
+fmt.Printf("Avg:   $%.4f\n", summary.AvgCost)
+fmt.Printf("Max:   $%.4f\n", summary.MaxCost)
+fmt.Printf("Rate:  $%.4f/hour\n", summary.CostPerHour)
+```
+
+### Anomaly Detection
+
+Finds runs that deviate significantly from normal (mean + 2*stddev):
+
+```go
+anomalies, _ := analyzer.DetectAnomalies(ctx, time.Now().Add(-24*time.Hour))
+for _, a := range anomalies {
+    fmt.Printf("[%s] %s: %s\n", a.RunID, a.Type, a.Message)
+}
+```
+
+Anomaly types:
+- `high_cost` — cost significantly above average
+- `slow` — duration significantly above average
+- `chatty` — too many model calls (prompt may be unclear)
+- `error` — run had errors
+
+### Tool Statistics
+
+Per-tool usage across all traces:
+
+```go
+stats, _ := analyzer.ToolStats(ctx, time.Now().Add(-7*24*time.Hour))
+for name, s := range stats {
+    fmt.Printf("%s: %d calls, avg %s, error rate %.0f%%\n",
+        name, s.CallCount, s.AvgDuration, s.ErrorRate*100)
+}
+```
+
+### Error Report
+
+```go
+errors, _ := analyzer.ErrorReport(ctx, time.Now().Add(-24*time.Hour))
+for _, t := range errors {
+    fmt.Printf("[%s] %s — %d spans, has errors\n", t.RunID, t.UserMessage, len(t.Spans))
+}
+```
+
+---
+
+## Trace Replay
+
+Re-run any stored trace with a different agent to compare cost, quality, and behavior.
+
+### Basic Replay
+
+```go
+// Load a problematic trace
+original, _ := store.LoadTrace(ctx, "run_problem")
+
+// Replay with a better agent
+betterAgent := agnogo.Agent("Improved prompt...", agnogo.Reliable())
+result, _ := agnogo.Replay(ctx, original, betterAgent)
+
+result.Print()
+```
+
+Output:
+
+```
+═══ REPLAY COMPARISON ═══
+
+  Input:    "Book Thursday at 2pm"
+  Original: 2.5s | $0.0003 | 388 tok | 2 model | 1 tool
+  Replayed: 1.8s | $0.0002 | 290 tok | 1 model | 1 tool
+
+  Cost:     -0.0001
+  Tokens:   -98
+  Duration: -700ms
+  Models:   -1
+  Tools:    +0
+```
+
+### Use Cases
+
+- **Debug failed bookings**: replay the exact conversation to see what went wrong
+- **Compare models**: replay same input with GPT-4.1-mini vs Claude to compare cost/quality
+- **Validate prompt changes**: replay production traces with new prompts before deploying
+- **Regression testing**: replay a set of traces after updating the agent to verify no regressions
