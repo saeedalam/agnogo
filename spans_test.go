@@ -236,6 +236,54 @@ func TestSpanCollectorReset(t *testing.T) {
 	}
 }
 
+// ── Collect/Reset Independence ───────────────────────────────────────
+
+func TestCollectIndependentFromReset(t *testing.T) {
+	sc := NewSpanCollector()
+	trace := sc.Trace()
+
+	trace.OnModelCall(nil, &ModelResponse{Usage: &Usage{InputTokens: 10}}, 100*time.Millisecond)
+
+	rt := sc.Collect(nil)
+	if len(rt.Spans) != 1 {
+		t.Fatalf("before reset: spans = %d", len(rt.Spans))
+	}
+
+	// Reset should NOT affect the already-collected trace
+	sc.Reset()
+
+	if len(rt.Spans) != 1 {
+		t.Errorf("after reset: collected trace spans = %d, want 1 (should be independent)", len(rt.Spans))
+	}
+}
+
+// ── JSON Duration Milliseconds ──────────────────────────────────────
+
+func TestRunTraceJSONDurationIsMilliseconds(t *testing.T) {
+	sc := NewSpanCollector()
+	// Wait a bit so duration is measurable
+	time.Sleep(10 * time.Millisecond)
+	rt := sc.Collect(nil)
+
+	jsonStr := rt.JSON()
+
+	var parsed map[string]any
+	json.Unmarshal([]byte(jsonStr), &parsed)
+
+	durMS, ok := parsed["duration_ms"].(float64)
+	if !ok {
+		t.Fatalf("duration_ms not found or wrong type in JSON")
+	}
+
+	// Should be ~10ms, not ~10,000,000 (nanoseconds)
+	if durMS > 5000 {
+		t.Errorf("duration_ms = %.0f — looks like nanoseconds, not milliseconds", durMS)
+	}
+	if durMS < 5 {
+		t.Errorf("duration_ms = %.0f — too small, might not be measuring correctly", durMS)
+	}
+}
+
 // ── SpanKind String ─────────────────────────────────────────────────
 
 func TestSpanKindString(t *testing.T) {

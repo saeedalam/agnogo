@@ -235,6 +235,18 @@ func (rt *RunTrace) JSON() string {
 	return string(data)
 }
 
+// MarshalJSON serializes RunTrace with Duration as milliseconds.
+func (rt *RunTrace) MarshalJSON() ([]byte, error) {
+	type rtAlias RunTrace
+	return json.Marshal(&struct {
+		*rtAlias
+		DurationMS int64 `json:"duration_ms"`
+	}{
+		rtAlias:    (*rtAlias)(rt),
+		DurationMS: rt.Duration.Milliseconds(),
+	})
+}
+
 // ── SpanCollector ────────────────────────────────────────────────────
 
 // SpanCollector captures structured spans from Trace hooks.
@@ -261,6 +273,9 @@ func NewSpanCollector() *SpanCollector {
 // Pass this to WithTrace() when creating an agent.
 func (sc *SpanCollector) Trace() *Trace {
 	return &Trace{
+		// Note: cost estimation uses gpt-4.1-mini pricing as default.
+		// The Trace API doesn't pass the model name, so we can't auto-detect.
+		// For accurate costs with other models, use NewCostTracker() directly.
 		OnModelCall: func(_ []Message, resp *ModelResponse, dur time.Duration) {
 			span := &Span{
 				Name:      "call",
@@ -383,15 +398,19 @@ func (sc *SpanCollector) addReasoning(span *Span) {
 }
 
 // Collect finalizes the trace after a Run() completes.
-// Call this after agent.Run() returns.
+// Returns an independent copy — safe to call Reset() after.
 func (sc *SpanCollector) Collect(resp *Response) *RunTrace {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
+	// Copy spans so the trace is independent of the collector
+	spansCopy := make([]*Span, len(sc.spans))
+	copy(spansCopy, sc.spans)
+
 	rt := &RunTrace{
 		StartTime: sc.startTime,
 		Duration:  time.Since(sc.startTime),
-		Spans:     sc.spans,
+		Spans:     spansCopy,
 	}
 
 	if resp != nil && resp.Metrics != nil {
