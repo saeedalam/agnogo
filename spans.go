@@ -138,9 +138,10 @@ type RunTrace struct {
 	Spans       []*Span       `json:"spans"`
 
 	// Context (for persistence + replay)
-	UserMessage string `json:"user_message,omitempty"` // what the user said
-	SessionID   string `json:"session_id,omitempty"`   // which session
-	HasErrors   bool   `json:"has_errors,omitempty"`   // any SpanError?
+	UserMessage  string `json:"user_message,omitempty"`  // what the user said
+	SessionID    string `json:"session_id,omitempty"`    // which session
+	ResponseText string `json:"response_text,omitempty"` // what the agent answered
+	HasErrors    bool   `json:"has_errors,omitempty"`    // any SpanError?
 
 	// Aggregates (computed from spans)
 	TotalTokens  int     `json:"total_tokens"`
@@ -329,7 +330,11 @@ func (sc *SpanCollector) Trace() *Trace {
 			if resp != nil && resp.Usage != nil {
 				span.InputTokens = resp.Usage.InputTokens
 				span.OutputTokens = resp.Usage.OutputTokens
-				span.Cost = sc.prices.Estimate("gpt-4.1-mini", resp.Usage)
+				model := resp.Model
+				if model == "" {
+					model = "gpt-4.1-mini" // fallback if provider doesn't set Model
+				}
+				span.Cost = sc.prices.Estimate(model, resp.Usage)
 			}
 			sc.add(span)
 		},
@@ -409,6 +414,14 @@ func (sc *SpanCollector) Trace() *Trace {
 			})
 		},
 
+		OnRunStart: func(runID string, session *Session) {
+			sc.mu.Lock()
+			if session != nil {
+				sc.sessionID = session.ID
+			}
+			sc.mu.Unlock()
+		},
+
 		OnReasoning: func(step ReasoningStep, index int) {
 			span := &Span{
 				Name:       step.Title,
@@ -463,8 +476,11 @@ func (sc *SpanCollector) Collect(resp *Response) *RunTrace {
 		Spans:     spansCopy,
 	}
 
-	if resp != nil && resp.Metrics != nil {
-		rt.RunID = resp.Metrics.RunID
+	if resp != nil {
+		if resp.Metrics != nil {
+			rt.RunID = resp.Metrics.RunID
+		}
+		rt.ResponseText = resp.Text
 	}
 
 	// Set context fields

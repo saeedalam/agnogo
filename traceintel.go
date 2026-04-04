@@ -220,6 +220,70 @@ func (ta *TraceAnalyzer) ErrorReport(ctx context.Context, since time.Time) ([]*R
 	return ta.store.QueryTraces(ctx, TraceQuery{Since: since, HasErrors: &hasErrors})
 }
 
+// ── Trend Detection ──────────────────────────────────────────────────
+
+// CostTrend compares cost averages between two time windows.
+type CostTrend struct {
+	CurrentAvg    float64 `json:"current_avg"`
+	PreviousAvg   float64 `json:"previous_avg"`
+	ChangePercent float64 `json:"change_percent"` // +40.0 means costs increased 40%
+	Direction     string  `json:"direction"`      // "increasing", "decreasing", "stable"
+}
+
+// CostTrend compares the current time window's average cost to the previous
+// window of the same duration. For example, CostTrend(ctx, 24h, 24h) compares
+// today's average to yesterday's average.
+func (ta *TraceAnalyzer) CostTrend(ctx context.Context, currentWindow, previousWindow time.Duration) (*CostTrend, error) {
+	now := time.Now()
+
+	currentTraces, err := ta.store.QueryTraces(ctx, TraceQuery{
+		Since: now.Add(-currentWindow),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	previousTraces, err := ta.store.QueryTraces(ctx, TraceQuery{
+		Since: now.Add(-currentWindow - previousWindow),
+		Until: now.Add(-currentWindow),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	currentAvg := avgCost(currentTraces)
+	previousAvg := avgCost(previousTraces)
+
+	trend := &CostTrend{
+		CurrentAvg:  currentAvg,
+		PreviousAvg: previousAvg,
+		Direction:   "stable",
+	}
+
+	if previousAvg > 0 {
+		trend.ChangePercent = ((currentAvg - previousAvg) / previousAvg) * 100
+	}
+
+	if trend.ChangePercent > 10 {
+		trend.Direction = "increasing"
+	} else if trend.ChangePercent < -10 {
+		trend.Direction = "decreasing"
+	}
+
+	return trend, nil
+}
+
+func avgCost(traces []*RunTrace) float64 {
+	if len(traces) == 0 {
+		return 0
+	}
+	var total float64
+	for _, t := range traces {
+		total += t.TotalCost
+	}
+	return total / float64(len(traces))
+}
+
 // ── Math Helpers ─────────────────────────────────────────────────────
 
 func meanStdDev(vals []float64) (mean, stddev float64) {

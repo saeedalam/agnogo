@@ -80,14 +80,12 @@ func Replay(ctx context.Context, original *RunTrace, agent *Core) (*ReplayResult
 		ToolCallDelta:  replayed.ToolCalls - original.ToolCalls,
 	}
 
-	// Compare responses if available
+	// Compare responses
+	diff.OriginalResponse = original.ResponseText
 	if resp != nil {
 		diff.ReplayedResponse = resp.Text
 	}
-	// Check if responses differ
-	// (We can't compare text directly since the original response text isn't in RunTrace,
-	//  but we can flag that a replay was performed)
-	diff.ResponseChanged = true // always true — different run, likely different text
+	diff.ResponseChanged = original.ResponseText != diff.ReplayedResponse
 
 	return &ReplayResult{
 		Original: original,

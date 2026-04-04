@@ -397,6 +397,222 @@ func TestReplayPrint(t *testing.T) {
 	result.Print()
 }
 
+// ── Fix: ResponseText in RunTrace ────────────────────────────────────
+
+func TestResponseTextCapture(t *testing.T) {
+	sc := NewSpanCollector()
+	trace := sc.Trace()
+	trace.OnModelCall(nil, &ModelResponse{Usage: &Usage{}}, 100*time.Millisecond)
+
+	rt := sc.Collect(&Response{Text: "The answer is 42"})
+	if rt.ResponseText != "The answer is 42" {
+		t.Errorf("response text = %q", rt.ResponseText)
+	}
+}
+
+// ── Fix: SessionID via OnRunStart ────────────────────────────────────
+
+func TestSessionIDFromRunStart(t *testing.T) {
+	sc := NewSpanCollector()
+	trace := sc.Trace()
+
+	// Simulate what agent.go does
+	session := NewSession("booking-123")
+	trace.OnRunStart("run_abc", session)
+	trace.OnModelCall(nil, &ModelResponse{Usage: &Usage{}}, 100*time.Millisecond)
+
+	rt := sc.Collect(nil)
+	if rt.SessionID != "booking-123" {
+		t.Errorf("sessionID = %q, want %q", rt.SessionID, "booking-123")
+	}
+}
+
+// ── Fix: Model Name in Cost Estimation ──────────────────────────────
+
+func TestModelNameInCostEstimation(t *testing.T) {
+	sc := NewSpanCollector()
+	trace := sc.Trace()
+
+	// Model that identifies itself
+	trace.OnModelCall(nil, &ModelResponse{
+		Model: "gpt-4o",
+		Usage: &Usage{InputTokens: 1000, OutputTokens: 500},
+	}, 100*time.Millisecond)
+
+	rt := sc.Collect(nil)
+	if rt.Spans[0].Cost == 0 {
+		t.Error("cost should be > 0")
+	}
+	// gpt-4o costs more than gpt-4.1-mini — verify different pricing
+	// gpt-4o: $2.50/M input, $10.00/M output → 1000*2.50/1M + 500*10/1M = 0.0025 + 0.005 = 0.0075
+	if rt.Spans[0].Cost < 0.005 {
+		t.Errorf("cost = %f, expected gpt-4o pricing (>$0.005)", rt.Spans[0].Cost)
+	}
+}
+
+func TestModelNameFallback(t *testing.T) {
+	sc := NewSpanCollector()
+	trace := sc.Trace()
+
+	// Model that doesn't identify itself — should fallback to gpt-4.1-mini
+	trace.OnModelCall(nil, &ModelResponse{
+		Usage: &Usage{InputTokens: 1000, OutputTokens: 500},
+	}, 100*time.Millisecond)
+
+	rt := sc.Collect(nil)
+	// gpt-4.1-mini: $0.40/M input, $1.60/M output → much cheaper
+	if rt.Spans[0].Cost > 0.005 {
+		t.Errorf("cost = %f, expected gpt-4.1-mini pricing (<$0.005)", rt.Spans[0].Cost)
+	}
+}
+
+// ── Fix: FileTraceStore ─────────────────────────────────────────────
+
+func TestFileTraceStoreSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewFileTraceStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	trace := &RunTrace{RunID: "run_file1", TotalCost: 0.05, UserMessage: "hello"}
+	if err := store.SaveTrace(context.Background(), trace); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := store.LoadTrace(context.Background(), "run_file1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.TotalCost != 0.05 {
+		t.Errorf("cost = %f", loaded.TotalCost)
+	}
+	if loaded.UserMessage != "hello" {
+		t.Errorf("user message = %q", loaded.UserMessage)
+	}
+}
+
+func TestFileTraceStoreQuery(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewFileTraceStore(dir)
+	ctx := context.Background()
+
+	store.SaveTrace(ctx, &RunTrace{RunID: "cheap", TotalCost: 0.001, StartTime: time.Now()})
+	store.SaveTrace(ctx, &RunTrace{RunID: "expensive", TotalCost: 0.10, StartTime: time.Now()})
+
+	results, err := store.QueryTraces(ctx, TraceQuery{MinCost: 0.01})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 expensive trace, got %d", len(results))
+	}
+}
+
+func TestFileTraceStoreDelete(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewFileTraceStore(dir)
+	ctx := context.Background()
+
+	store.SaveTrace(ctx, &RunTrace{RunID: "to_delete"})
+	store.DeleteTrace(ctx, "to_delete")
+
+	_, err := store.LoadTrace(ctx, "to_delete")
+	if err == nil {
+		t.Error("expected error after delete")
+	}
+}
+
+// ── Fix: CostTrend ──────────────────────────────────────────────────
+
+func TestCostTrend(t *testing.T) {
+	store := NewMemoryTraceStore()
+	ctx := context.Background()
+	now := time.Now()
+
+	// "Previous" window: 2-1 hours ago, avg $0.01
+	store.SaveTrace(ctx, &RunTrace{RunID: "old1", StartTime: now.Add(-90 * time.Minute), TotalCost: 0.01})
+	store.SaveTrace(ctx, &RunTrace{RunID: "old2", StartTime: now.Add(-80 * time.Minute), TotalCost: 0.01})
+
+	// "Current" window: last hour, avg $0.05
+	store.SaveTrace(ctx, &RunTrace{RunID: "new1", StartTime: now.Add(-30 * time.Minute), TotalCost: 0.05})
+	store.SaveTrace(ctx, &RunTrace{RunID: "new2", StartTime: now.Add(-20 * time.Minute), TotalCost: 0.05})
+
+	analyzer := NewTraceAnalyzer(store)
+	trend, err := analyzer.CostTrend(ctx, time.Hour, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if trend.Direction != "increasing" {
+		t.Errorf("direction = %q, want increasing", trend.Direction)
+	}
+	if trend.ChangePercent < 100 {
+		t.Errorf("change = %.0f%%, expected > 100%% increase", trend.ChangePercent)
+	}
+}
+
+func TestCostTrendStable(t *testing.T) {
+	store := NewMemoryTraceStore()
+	ctx := context.Background()
+	now := time.Now()
+
+	store.SaveTrace(ctx, &RunTrace{RunID: "old1", StartTime: now.Add(-90 * time.Minute), TotalCost: 0.01})
+	store.SaveTrace(ctx, &RunTrace{RunID: "new1", StartTime: now.Add(-30 * time.Minute), TotalCost: 0.01})
+
+	analyzer := NewTraceAnalyzer(store)
+	trend, _ := analyzer.CostTrend(ctx, time.Hour, time.Hour)
+
+	if trend.Direction != "stable" {
+		t.Errorf("direction = %q, want stable", trend.Direction)
+	}
+}
+
+// ── Fix: TraceDiff ResponseChanged ──────────────────────────────────
+
+func TestReplayResponseChanged(t *testing.T) {
+	original := &RunTrace{
+		RunID:        "run_orig",
+		UserMessage:  "What time is it?",
+		ResponseText: "It's 10:00 AM",
+	}
+
+	agent := New(Config{
+		Model: &mockModel{responses: []ModelResponse{{Text: "It's 3:00 PM"}}},
+	})
+
+	result, err := Replay(context.Background(), original, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Diff.ResponseChanged {
+		t.Error("response should have changed (different text)")
+	}
+	if result.Diff.OriginalResponse != "It's 10:00 AM" {
+		t.Errorf("original response = %q", result.Diff.OriginalResponse)
+	}
+	if result.Diff.ReplayedResponse != "It's 3:00 PM" {
+		t.Errorf("replayed response = %q", result.Diff.ReplayedResponse)
+	}
+}
+
+func TestReplayResponseUnchanged(t *testing.T) {
+	original := &RunTrace{
+		RunID:        "run_same",
+		UserMessage:  "Hello",
+		ResponseText: "Hi there!",
+	}
+
+	agent := New(Config{
+		Model: &mockModel{responses: []ModelResponse{{Text: "Hi there!"}}},
+	})
+
+	result, _ := Replay(context.Background(), original, agent)
+	if result.Diff.ResponseChanged {
+		t.Error("response should NOT have changed (same text)")
+	}
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────
 
 func runID(i int) string {

@@ -17,7 +17,8 @@ type ModelProvider interface {
 type ModelResponse struct {
 	Text      string
 	ToolCalls []ToolCall
-	Usage     *Usage // token usage from the model (optional)
+	Usage     *Usage  // token usage from the model (optional)
+	Model     string  // which model produced this (for accurate cost estimation)
 }
 
 // Usage tracks token counts from a model call.

@@ -130,6 +130,7 @@ func formatOpenAIAudio(aud Audio) map[string]any {
 // parseOpenAIResponse parses the OpenAI-format JSON response into a ModelResponse.
 func parseOpenAIResponse(data []byte) (*ModelResponse, error) {
 	var result struct {
+		Model   string `json:"model"`
 		Choices []struct {
 			Message struct {
 				Content   *string `json:"content"`
@@ -156,7 +157,7 @@ func parseOpenAIResponse(data []byte) (*ModelResponse, error) {
 	}
 
 	choice := result.Choices[0].Message
-	mr := &ModelResponse{}
+	mr := &ModelResponse{Model: result.Model}
 	if choice.Content != nil {
 		mr.Text = *choice.Content
 	}
@@ -432,6 +433,7 @@ func formatAnthropicRequest(model string, cfg ModelConfig, messages []Message, t
 // parseAnthropicResponse parses the Anthropic-format JSON response into a ModelResponse.
 func parseAnthropicResponse(data []byte) (*ModelResponse, error) {
 	var result struct {
+		Model   string `json:"model"`
 		Content []struct {
 			Type  string          `json:"type"`
 			Text  string          `json:"text"`
@@ -448,7 +450,7 @@ func parseAnthropicResponse(data []byte) (*ModelResponse, error) {
 		return nil, fmt.Errorf("anthropic: parse response JSON: %w", err)
 	}
 
-	mr := &ModelResponse{}
+	mr := &ModelResponse{Model: result.Model}
 	for _, c := range result.Content {
 		switch c.Type {
 		case "text":
@@ -733,7 +735,8 @@ func formatGeminiRequest(_ string, cfg ModelConfig, messages []Message, tools []
 // parseGeminiResponse parses the Gemini-format JSON response into a ModelResponse.
 func parseGeminiResponse(data []byte) (*ModelResponse, error) {
 	var result struct {
-		Candidates []struct {
+		ModelVersion string `json:"modelVersion"`
+		Candidates   []struct {
 			Content struct {
 				Parts []struct {
 					Text         string `json:"text"`
@@ -757,7 +760,7 @@ func parseGeminiResponse(data []byte) (*ModelResponse, error) {
 		return nil, fmt.Errorf("gemini: empty response")
 	}
 
-	mr := &ModelResponse{}
+	mr := &ModelResponse{Model: result.ModelVersion}
 	for _, part := range result.Candidates[0].Content.Parts {
 		if part.Text != "" {
 			mr.Text += part.Text

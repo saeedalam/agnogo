@@ -216,6 +216,9 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 	}
 
 	dbg.printRunStart(runID, session.ID)
+	if a.trace != nil && a.trace.OnRunStart != nil {
+		a.trace.OnRunStart(runID, session)
+	}
 
 	// Input guardrails (skip for empty userMessage — used with AddMediaMessage)
 	if userMessage != "" {

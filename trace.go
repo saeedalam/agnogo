@@ -17,6 +17,7 @@ type Trace struct {
 	OnApproval      func(approval HumanApproval)
 	OnSessionSave   func(session *Session, err error)
 	OnReasoning     func(step ReasoningStep, index int)
+	OnRunStart      func(runID string, session *Session)
 }
 
 // DefaultTrace returns a trace that logs everything via slog.
