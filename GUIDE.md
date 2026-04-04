@@ -1,4 +1,56 @@
-# agnogo -- Complete Guide
+# agnogo — Complete Guide
+
+## Table of Contents
+
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [One-Shot (Ask)](#one-shot-ask)
+- [Error Handling](#error-handling)
+- [Typed Tools](#typed-tools)
+- [HTTP Server](#http-server)
+- [Pipelines and Concurrency](#pipelines-and-concurrency)
+- [Resilience](#resilience)
+- [Observability](#observability)
+- [Batch Processing](#batch-processing)
+- [Graph Workflows](#graph-workflows)
+- [Run Context](#run-context-dependency-injection)
+- [Event Bus](#event-bus)
+- [Middleware Hooks](#middleware-hooks)
+- [Session Summarization](#session-summarization)
+- [Model Providers](#model-providers)
+- [Tools](#tools)
+- [Knowledge (RAG)](#knowledge-rag)
+- [Memory](#memory)
+- [Session Storage](#session-storage)
+- [Guardrails](#guardrails)
+- [Teams](#teams-multi-agent)
+- [Workflows](#workflows)
+- [Reasoning](#reasoning-chain-of-thought)
+- [Streaming](#streaming)
+- [Structured Output](#structured-output)
+- [Retry & History](#retry--history)
+- [Debug Mode](#debug-mode)
+- [Tracing](#tracing)
+- [Cancel a Run](#cancel-a-run)
+- [Serialization](#serialization)
+- [Reliability Layer](#reliability-layer)
+- [MCP](#mcp-model-context-protocol)
+- [OpenTelemetry Export](#opentelemetry-export)
+- [Eval Framework](#eval-framework)
+- [Concurrent Tool Execution](#concurrent-tool-execution)
+- [Graph Function Nodes](#graph-function-nodes)
+- [Workflow Engine](#workflow-engine)
+- [Multi-Modal Support](#multi-modal-support)
+- [Advanced Reasoning](#advanced-reasoning)
+- [Learning Machine](#learning-machine)
+- [Structured Tracing](#structured-tracing)
+- [Trace Persistence](#trace-persistence)
+- [Trace Analytics](#trace-analytics)
+- [Trace Replay](#trace-replay)
+- [Consistency Checking](#consistency-checking)
+- [Loop Detection](#loop-detection)
+
+---
 
 ## Installation
 
@@ -1763,3 +1815,76 @@ Output:
 - **Compare models**: replay same input with GPT-4.1-mini vs Claude to compare cost/quality
 - **Validate prompt changes**: replay production traces with new prompts before deploying
 - **Regression testing**: replay a set of traces after updating the agent to verify no regressions
+
+---
+
+## Consistency Checking
+
+Detect hallucinations by asking the same question multiple times and measuring agreement. Based on the principle that factual answers are consistent, while hallucinations vary.
+
+```go
+result, _ := agnogo.CheckConsistency(ctx, agent, "What year was Go released?", 3)
+
+fmt.Printf("Agreement: %.0f%%\n", result.Agreement*100)
+fmt.Printf("Consistent: %v\n", result.Consistent)
+fmt.Printf("Responses: %v\n", result.Responses)
+```
+
+Uses pairwise Jaccard similarity on significant words. No embeddings needed. Cost: N extra LLM calls (use for evaluation, not production guardrails).
+
+---
+
+## Loop Detection
+
+Prevents infinite loops in tool calling. Detects A→B→A→B cycling patterns.
+
+```go
+ld := agnogo.NewLoopDetector(3, 2, 3) // maxRepeats, maxCycles, maxToolErrors
+
+ld.RecordCall("search")
+ld.RecordCall("process")
+ld.RecordCall("search")
+ld.RecordCall("process")
+
+detected, desc := ld.DetectCycle() // true, "cycle: search -> process (2 times)"
+
+// Per-tool error tracking
+ld.RecordError("flaky_tool")
+ld.ShouldSkipTool("flaky_tool") // true after 3 errors
+```
+
+Used internally by the agent loop for dedup detection. Can also be used standalone for custom workflow monitoring.
+
+---
+
+## Cost Trend Detection
+
+Compare cost averages between time windows to detect gradual drift.
+
+```go
+analyzer := agnogo.NewTraceAnalyzer(store)
+trend, _ := analyzer.CostTrend(ctx, 24*time.Hour, 24*time.Hour) // today vs yesterday
+
+fmt.Printf("Current avg:  $%.4f\n", trend.CurrentAvg)
+fmt.Printf("Previous avg: $%.4f\n", trend.PreviousAvg)
+fmt.Printf("Change:       %+.0f%%\n", trend.ChangePercent)
+fmt.Printf("Direction:    %s\n", trend.Direction) // "increasing", "decreasing", "stable"
+```
+
+Alerts when costs increase by more than 10% between windows. Simple rolling comparison — no ML required.
+
+---
+
+## File-Based Trace Store
+
+Persist traces as JSON files. Survives restarts. Zero external dependencies.
+
+```go
+store, _ := agnogo.NewFileTraceStore("./traces")
+sc := agnogo.NewSpanCollector().WithTraceStore(store)
+
+// Each trace saved as {runID}.json in ./traces/
+// Query reads all files and filters (good for <10k traces)
+```
+
+For larger scale, implement the `TraceStore` interface with your database (Postgres, SQLite, etc.).

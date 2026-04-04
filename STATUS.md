@@ -203,7 +203,7 @@ This document tracks feature parity between the two projects.
 | MCP tools | `MCPTools` | `mcp.Connect()` | Done |
 | Eval framework | -- | `NewEval()` with assertions | Go-only |
 | Followup questions | `followups=True` | -- | Todo |
-| Learning machine | `learning=True` | -- | Todo |
+| Learning machine | `learning=True` | `LearningMachine` | Done |
 | Culture manager | experimental | -- | Todo |
 | Compression | `compress_tool_results` | -- | Todo |
 
