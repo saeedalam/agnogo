@@ -321,7 +321,7 @@ These features exist only in agnogo and have no equivalent in the Python Agno li
 | Built-in tools | 129 | 35 | 27% |
 | Debug/Observability | 7 | 7 | 100% |
 | Go-exclusive features | 0 | 58 | -- |
-| Tests | | 370+ | |
+| Tests | | 590+ | |
 | Core framework | | | ~98% |
 | Including integrations | | | ~50% |
 

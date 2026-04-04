@@ -1,2 +1,21 @@
+# Secrets
 .env
+
+# IDE / tools
+/.claude/
+*.exe
+*.out
+
+# Database
 aegis.db*
+
+# Internal planning
+PHASE2_PLAN.md
+
+# Runtime artifacts
+LAST_RUN_OUTPUT.md
+
+# Cookbook generated files
+cookbook/12_self_improve/knowledge/
+cookbook/12_self_improve/output/
+cookbook/12_self_improve/papers/
