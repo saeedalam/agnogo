@@ -1496,3 +1496,113 @@ type LearningStore interface {
     Recall(ctx context.Context, session *Session) string
     Process(ctx context.Context, model ModelProvider, session *Session, messages []Message)
 }
+```
+
+---
+
+## Structured Tracing
+
+Every `Run()` is a black box. Structured tracing opens it up — every model call, tool call, guardrail check, and reasoning step captured with timing, tokens, cost, and status.
+
+### Setup
+
+```go
+sc := agnogo.NewSpanCollector()
+agent := agnogo.Agent("You are a booking assistant.",
+    agnogo.Reliable(),
+    agnogo.WithSpanCollector(sc),
+)
+
+resp, _ := agent.Run(ctx, session, "Book Thursday at 2pm")
+trace := sc.Collect(resp)
+trace.Print()
+```
+
+### Output
+
+```
+[run r_f17c] 2.5s | $0.0002 | 388 tok | 2 model | 1 tool
+  ├─ [model]  call                1.3s  179 tok  $0.0001
+  ├─ [tool]   check_availability  <1ms  → "3 slots found"
+  └─ [model]  call                1.2s  209 tok  $0.0001
+```
+
+Every span shows: what happened, how long it took, how much it cost, and whether it succeeded.
+
+### JSON Export
+
+```go
+jsonStr := trace.JSON()
+db.Save(jsonStr) // store for analytics
+```
+
+Produces structured JSON with proper types — `duration_ms` as milliseconds, `kind` as string ("model", "tool", "guard"), `status` as string ("ok", "error", "blocked").
+
+### Cost Monitoring
+
+```go
+trace := sc.Collect(resp)
+if trace.TotalCost > 0.10 {
+    alert("Expensive conversation: $%.2f", trace.TotalCost)
+}
+if trace.ModelCalls > 5 {
+    log.Warn("agent making too many model calls", "count", trace.ModelCalls)
+}
+```
+
+### Guardrail Visibility
+
+When `Reliable()` is enabled, guardrail checks appear as spans:
+
+```
+[run r_abc] 1.8s | $0.003 | 420 tok | 1 model | 0 tool
+  ├─ [guard]  pii-input           input   ✓
+  ├─ [model]  call                1.5s  420 tok  $0.003
+  ├─ [guard]  hallucination       output  ✓
+  └─ [guard]  pii-output          output  ✓
+```
+
+If a guardrail blocks: `✗ BLOCKED` appears instead of `✓`.
+
+### Reasoning Trace
+
+When reasoning is enabled, thinking steps appear as nested spans:
+
+```
+[run r_xyz] 5.2s | $0.008 | 1200 tok | 4 model | 2 tool
+  ├─ [reasoning]  reasoning
+  │   ├─ [reasoning]  Analyze problem       confidence: 85%
+  │   └─ [reasoning]  Plan approach         confidence: 90%
+  ├─ [model]  call                1.5s  400 tok  $0.003
+  ...
+```
+
+### Reuse Across Runs
+
+Call `Reset()` between runs to reuse the same collector:
+
+```go
+sc := agnogo.NewSpanCollector()
+agent := agnogo.Agent("...", agnogo.WithSpanCollector(sc))
+
+// Run 1
+resp1, _ := agent.Run(ctx, session, "first question")
+trace1 := sc.Collect(resp1)
+sc.Reset()
+
+// Run 2
+resp2, _ := agent.Run(ctx, session, "second question")
+trace2 := sc.Collect(resp2)
+```
+
+### Span Types
+
+| Kind | When | Data |
+|------|------|------|
+| `SpanModel` | LLM API call | tokens, cost, duration |
+| `SpanTool` | Tool execution | args, result, duration, error |
+| `SpanGuardrail` | Input/output check | direction, blocked |
+| `SpanReasoning` | CoT step | title, confidence, children |
+| `SpanKnowledge` | RAG search | query, duration |
+| `SpanApproval` | HITL request | tool, reason |
+| `SpanSession` | Session save | error |

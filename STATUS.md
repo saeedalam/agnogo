@@ -295,6 +295,8 @@ These features exist only in agnogo and have no equivalent in the Python Agno li
 | `UserProfileStore` | Structured user facts with incremental merge |
 | `SessionContextStore` | Session summaries (decisions, outcomes, topics) |
 | `EntityMemoryStore` | External entity knowledge with fact/event deduplication |
+| `SpanCollector` / `RunTrace` | Structured agent tracing — model/tool/guardrail spans with timing, tokens, cost |
+| `RunTrace.Print()` / `.JSON()` | Human-readable trace tree + machine-readable JSON export |
 | 19 utility tools | regex, base64, hash, uuid, time, env, template, yaml, xml, diff, archive, crypto, dns, tcp, markdown, pdf, image, cron, semver, metrics |
 
 ---

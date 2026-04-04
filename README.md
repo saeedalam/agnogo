@@ -573,6 +573,26 @@ agent := agnogo.Agent("...", agnogo.WithLearning(lm))
 
 Recalls context before each run, extracts learnings after. Profile merges incrementally. Entity facts deduplicated.
 
+## Structured Tracing
+
+See exactly what happened inside every `Run()` — model calls, tool calls, guardrails, cost, tokens:
+
+```go
+sc := agnogo.NewSpanCollector()
+agent := agnogo.Agent("...", agnogo.WithSpanCollector(sc))
+resp, _ := agent.Run(ctx, session, "Book Thursday 2pm")
+sc.Collect(resp).Print()
+```
+
+```
+[run r_f17c] 2.5s | $0.0002 | 388 tok | 2 model | 1 tool
+  ├─ [model]  call      1.3s  179 tok  $0.0001
+  ├─ [tool]   get_time  <1ms  → "10:30 AM"
+  └─ [model]  call      1.2s  209 tok  $0.0001
+```
+
+Built-in, zero-config, zero dependencies. Export as JSON for analytics. No other Go agent framework has this.
+
 ## Run Context (Dependency Injection)
 
 ```go
@@ -643,6 +663,7 @@ agnogo/
   media.go             Multi-modal (Image, Audio, File) + MIME detection
   reasoning.go         Advanced reasoning (native, CoT, NextAction)
   learn.go             Learning Machine (UserProfile, SessionContext, EntityMemory)
+  spans.go             Structured agent tracing (SpanCollector, RunTrace, Print, JSON)
   eval.go              Agent evaluation framework
   runctx.go            RunContext dependency injection
   events.go            EventBus pub/sub
