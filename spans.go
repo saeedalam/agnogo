@@ -1,6 +1,7 @@
 package agnogo
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -131,10 +132,15 @@ func (s SpanStatus) String() string {
 
 // RunTrace captures the complete structured trace of an agent Run().
 type RunTrace struct {
-	RunID     string        `json:"run_id"`
-	StartTime time.Time     `json:"start_time"`
-	Duration  time.Duration `json:"duration_ms"`
-	Spans     []*Span       `json:"spans"`
+	RunID       string        `json:"run_id"`
+	StartTime   time.Time     `json:"start_time"`
+	Duration    time.Duration `json:"duration_ms"`
+	Spans       []*Span       `json:"spans"`
+
+	// Context (for persistence + replay)
+	UserMessage string `json:"user_message,omitempty"` // what the user said
+	SessionID   string `json:"session_id,omitempty"`   // which session
+	HasErrors   bool   `json:"has_errors,omitempty"`   // any SpanError?
 
 	// Aggregates (computed from spans)
 	TotalTokens  int     `json:"total_tokens"`
@@ -259,6 +265,13 @@ type SpanCollector struct {
 
 	// Current reasoning parent (for nesting reasoning steps)
 	reasoningSpan *Span
+
+	// Captured context for persistence
+	userMessage string
+	sessionID   string
+
+	// Optional: auto-save traces to persistent store
+	traceStore TraceStore
 }
 
 // NewSpanCollector creates a span collector with default cost pricing.
@@ -269,6 +282,13 @@ func NewSpanCollector() *SpanCollector {
 	}
 }
 
+// WithTraceStore enables auto-saving traces to a persistent store.
+// When set, Collect() automatically calls SaveTrace(). Chainable.
+func (sc *SpanCollector) WithTraceStore(ts TraceStore) *SpanCollector {
+	sc.traceStore = ts
+	return sc
+}
+
 // Trace returns a *Trace that captures structured spans from all hook points.
 // Pass this to WithTrace() when creating an agent.
 func (sc *SpanCollector) Trace() *Trace {
@@ -276,7 +296,18 @@ func (sc *SpanCollector) Trace() *Trace {
 		// Note: cost estimation uses gpt-4.1-mini pricing as default.
 		// The Trace API doesn't pass the model name, so we can't auto-detect.
 		// For accurate costs with other models, use NewCostTracker() directly.
-		OnModelCall: func(_ []Message, resp *ModelResponse, dur time.Duration) {
+		OnModelCall: func(msgs []Message, resp *ModelResponse, dur time.Duration) {
+			// Capture user message from the first model call (for persistence/replay)
+			sc.mu.Lock()
+			if sc.userMessage == "" {
+				for i := len(msgs) - 1; i >= 0; i-- {
+					if msgs[i].Role == "user" && msgs[i].Content != "" {
+						sc.userMessage = msgs[i].Content
+						break
+					}
+				}
+			}
+			sc.mu.Unlock()
 			span := &Span{
 				Name:      "call",
 				Kind:      SpanModel,
@@ -345,7 +376,15 @@ func (sc *SpanCollector) Trace() *Trace {
 			})
 		},
 
-		OnSessionSave: func(_ *Session, err error) {
+		OnSessionSave: func(s *Session, err error) {
+			// Capture sessionID for persistence
+			if s != nil {
+				sc.mu.Lock()
+				if sc.sessionID == "" {
+					sc.sessionID = s.ID
+				}
+				sc.mu.Unlock()
+			}
 			status := SpanOK
 			if err != nil {
 				status = SpanError
@@ -417,9 +456,27 @@ func (sc *SpanCollector) Collect(resp *Response) *RunTrace {
 		rt.RunID = resp.Metrics.RunID
 	}
 
+	// Set context fields
+	rt.UserMessage = sc.userMessage
+	rt.SessionID = sc.sessionID
+
 	// Compute aggregates from spans
 	for _, span := range sc.spans {
 		sc.aggregate(rt, span)
+	}
+
+	// Check for errors
+	for _, span := range rt.Spans {
+		if span.Status == SpanError {
+			rt.HasErrors = true
+			break
+		}
+	}
+
+	// Auto-save to trace store if configured
+	if sc.traceStore != nil && rt.RunID != "" {
+		// Best-effort save — don't fail the Collect
+		_ = sc.traceStore.SaveTrace(context.Background(), rt)
 	}
 
 	return rt
@@ -445,6 +502,8 @@ func (sc *SpanCollector) Reset() {
 	defer sc.mu.Unlock()
 	sc.spans = nil
 	sc.reasoningSpan = nil
+	sc.userMessage = ""
+	sc.sessionID = ""
 	sc.startTime = time.Now()
 }
 
