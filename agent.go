@@ -264,6 +264,12 @@ func (a *Core) Run(ctx context.Context, session *Session, userMessage string) (*
 		if reasoningContext != "" {
 			messages = append(messages, Message{Role: "system", Content: reasoningContext})
 		}
+		// Fire reasoning trace hooks
+		if a.trace != nil && a.trace.OnReasoning != nil {
+			for i, step := range reasoningSteps {
+				a.trace.OnReasoning(step, i)
+			}
+		}
 	}
 
 	// Knowledge injection

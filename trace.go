@@ -16,6 +16,7 @@ type Trace struct {
 	OnRouting       func(agentName string, userMessage string)
 	OnApproval      func(approval HumanApproval)
 	OnSessionSave   func(session *Session, err error)
+	OnReasoning     func(step ReasoningStep, index int)
 }
 
 // DefaultTrace returns a trace that logs everything via slog.
